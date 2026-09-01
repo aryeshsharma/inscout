@@ -1,117 +1,124 @@
 import re
-from typing import List, Set
+from typing import List, Set, Dict
 from app.models.search import SearchRequest
 
 class QueryExpansionEngine:
     """
-    Expands a user search request into a semantically diverse suite of targeted
-    discovery queries without over-quoted dorks that search engines reject.
+    INSCOUT Semantic Query Expansion Engine (Anti-Username-Bias).
+    
+    Generates 25-35 diverse, high-yielding discovery queries designed to discover
+    genuine public creators through bio signals, contact markers, role synonyms,
+    and regional cluster expansions rather than keyword-heavy usernames.
     """
 
-    ROLE_SYNONYMS = {
+    ROLE_SYNONYMS: Dict[str, List[str]] = {
         "Fashion": [
-            "creator", "influencer", "blogger", "model", "stylist", "fashion designer",
-            "content creator", "lookbook", "streetwear", "wardrobe stylist", "runway model",
-            "fashionista", "style creator"
-        ],
-        "Beauty": [
-            "makeup artist", "mua", "beauty creator", "skincare blogger", "beauty influencer",
-            "hair stylist", "aesthetician", "cosmetics", "glam artist", "skincare expert",
-            "makeup studio", "salon"
-        ],
-        "Lifestyle": [
-            "creator", "influencer", "blogger", "vlogger", "content creator", "storyteller",
-            "daily vlog", "curator", "aesthetic creator", "digital creator"
-        ],
-        "Fitness": [
-            "trainer", "coach", "fitness coach", "personal trainer", "athlete", "bodybuilding",
-            "calisthenics", "gym coach", "wellness coach", "yoga teacher", "fitness trainer",
-            "gym trainer"
-        ],
-        "Food": [
-            "foodie", "chef", "food blogger", "baker", "recipe creator", "culinary artist",
-            "home chef", "food creator", "cafe explorer", "restaurant reviewer"
+            "fashion creator", "fashion influencer", "stylist", "fashion blogger", "model", "lookbook",
+            "streetwear creator", "wardrobe stylist", "fashion designer", "ootd creator",
+            "menswear stylist", "ethnic fashion", "sustainable fashion", "style curator"
         ],
         "Travel": [
-            "traveler", "travel blogger", "nomad", "travel creator", "explorer", "backpacking",
-            "travel vlog", "wanderer", "destination guide"
+            "travel creator", "travel blogger", "travel vlogger", "travel photographer",
+            "travel filmmaker", "backpacker", "wanderer", "nomad", "travel stories",
+            "road trips", "trekker", "itinerary guide", "solo traveller"
+        ],
+        "Beauty": [
+            "makeup artist", "mua", "beauty creator", "skincare blogger", "bridal makeup",
+            "hair stylist", "aesthetician", "cosmetics review", "glam artist", "skincare expert"
         ],
         "Technology": [
-            "developer", "software engineer", "tech creator", "coder", "programmer", "ai builder",
-            "tech founder", "devops engineer", "web developer", "python developer", "software developer"
+            "software developer", "tech creator", "coding educator", "fullstack engineer",
+            "tech founder", "python developer", "webdev creator", "system architect",
+            "devops engineer", "ai builder", "programmer"
+        ],
+        "Fitness": [
+            "fitness coach", "personal trainer", "strength coach", "athlete", "bodybuilding",
+            "calisthenics trainer", "wellness coach", "yoga instructor", "crossfit coach",
+            "endurance runner", "nutrition coach"
+        ],
+        "Food": [
+            "food creator", "food blogger", "chef", "baker", "recipe creator",
+            "culinary artist", "home chef", "cafe explorer", "street food guide"
+        ],
+        "Lifestyle": [
+            "content creator", "lifestyle blogger", "vlogger", "storyteller",
+            "aesthetic creator", "daily vlog", "digital creator", "curator"
         ],
         "Gaming": [
-            "gamer", "streamer", "esports player", "gaming creator", "twitch streamer",
+            "gaming creator", "streamer", "esports athlete", "twitch streamer",
             "gameplay creator", "pc gamer"
         ],
         "Finance": [
-            "investor", "finance creator", "trader", "fintech founder", "money mentor",
-            "stock trader", "wealth creator", "personal finance"
+            "finance creator", "investor", "stock trader", "fintech founder",
+            "wealth coach", "personal finance", "money mentor"
         ],
         "Music": [
-            "musician", "singer", "dj", "music producer", "artist", "composer", "songwriter",
-            "vocalist", "sound engineer"
+            "musician", "singer", "music producer", "dj", "songwriter",
+            "vocalist", "composer", "sound artist"
         ],
         "Photography": [
             "photographer", "cinematographer", "videographer", "portrait photographer",
-            "visual artist", "fashion photographer", "camera artist"
+            "visual artist", "fashion photographer", "street photographer"
         ],
         "Art": [
-            "artist", "illustrator", "designer", "digital artist", "painter", "graphic designer",
-            "sketch artist", "craft creator"
+            "artist", "illustrator", "digital artist", "painter", "graphic designer",
+            "sketch artist", "calligrapher", "craft creator"
         ],
         "Education": [
-            "educator", "teacher", "mentor", "trainer", "academic", "coach", "study creator",
-            "course creator"
+            "educator", "teacher", "mentor", "trainer", "course creator", "study creator"
         ],
         "Business": [
-            "founder", "entrepreneur", "ceo", "brand builder", "marketer", "business coach",
-            "agency owner", "startup builder"
+            "founder", "entrepreneur", "startup builder", "brand builder", "marketer", "agency owner"
         ],
         "Comedy": [
-            "comedian", "standup comic", "humor creator", "entertainer", "meme creator",
-            "comedy sketches", "parody artist"
+            "comedian", "standup comic", "humor creator", "meme creator", "sketch comedy"
         ],
         "Sports": [
-            "athlete", "player", "sports coach", "cricketer", "runner", "trainer", "sportsman",
-            "badminton player"
+            "athlete", "sports coach", "cricketer", "footballer", "badminton player", "runner"
         ],
         "Health": [
-            "nutritionist", "dietitian", "wellness coach", "doctor", "health creator",
-            "holistic health", "diet coach"
+            "nutritionist", "dietitian", "wellness coach", "holistic health", "doctor"
         ],
         "Other": [
-            "creator", "influencer", "blogger", "specialist", "expert", "artist", "consultant"
+            "creator", "influencer", "blogger", "artist", "specialist", "expert"
         ]
     }
 
-    CITY_ALIASES = {
-        "delhi": ["Delhi", "Delhi NCR", "New Delhi"],
-        "mumbai": ["Mumbai", "Bombay"],
-        "bangalore": ["Bangalore", "Bengaluru"],
-        "hyderabad": ["Hyderabad"],
-        "chennai": ["Chennai", "Madras"],
-        "kolkata": ["Kolkata", "Calcutta"],
-        "pune": ["Pune"],
-        "ahmedabad": ["Ahmedabad"],
-        "jaipur": ["Jaipur"],
-        "chandigarh": ["Chandigarh"],
-        "gurgaon": ["Gurgaon", "Gurugram"],
-        "noida": ["Noida"],
+    REGIONAL_CLUSTERS: Dict[str, List[str]] = {
+        "delhi": ["Delhi", "New Delhi", "Delhi NCR", "Gurgaon", "Gurugram", "Noida", "Faridabad", "Ghaziabad"],
+        "mumbai": ["Mumbai", "Bombay", "Bandra", "Andheri", "Juhu", "Navi Mumbai", "Thane"],
+        "bangalore": ["Bangalore", "Bengaluru", "Indiranagar", "Koramangala", "HSR Layout", "Whitefield"],
+        "hyderabad": ["Hyderabad", "Secunderabad", "Cyberabad", "Jubilee Hills", "Gachibowli"],
+        "chennai": ["Chennai", "Madras", "Adyar", "Anna Nagar"],
+        "kolkata": ["Kolkata", "Calcutta", "Salt Lake"],
+        "pune": ["Pune", "Kothrud", "Viman Nagar", "Baner"],
+        "ahmedabad": ["Ahmedabad", "Gandhinagar"],
+        "jaipur": ["Jaipur", "Pink City"],
+        "chandigarh": ["Chandigarh", "Mohali", "Panchkula"],
         "lucknow": ["Lucknow"],
-        "indore": ["Indore"],
-        "kochi": ["Kochi", "Cochin"],
-        "goa": ["Goa"]
+        "goa": ["Goa", "Panjim"]
     }
 
+    BIO_SIGNALS: List[str] = [
+        "DM for collabs",
+        "PR / collabs",
+        "collabs",
+        "collaborations",
+        "bookings / inquiries",
+        "contact",
+        "UGC creator",
+        "content creator",
+        "based in"
+    ]
+
     @classmethod
-    def expand_queries(cls, request: SearchRequest, max_queries: int = 30) -> List[str]:
+    def expand_queries(cls, request: SearchRequest, max_queries: int = 35) -> List[str]:
         queries: List[str] = []
         seen: Set[str] = set()
 
         raw_region = (request.region or "").strip()
         is_generic_region = not raw_region or "any region" in raw_region.lower() or raw_region.lower() == "india"
-        clean_region = "" if is_generic_region else re.sub(r'[^\w\s]', '', raw_region)
+        primary_city = "" if is_generic_region else re.sub(r'[^\w\s]', '', raw_region)
         
         raw_niche = (request.niche or "").strip()
         clean_niche = "" if not raw_niche or raw_niche.lower() == "other" else re.sub(r'[^\w\s]', '', raw_niche)
@@ -119,62 +126,64 @@ class QueryExpansionEngine:
         user_kws = [re.sub(r'[^\w\s]', '', k.strip()) for k in request.keywords if k.strip()]
         roles = cls.ROLE_SYNONYMS.get(clean_niche, cls.ROLE_SYNONYMS["Other"])
 
+        # Resolve regional cluster aliases
+        city_aliases = [primary_city] if primary_city else []
+        city_lower = primary_city.lower()
+        if city_lower in cls.REGIONAL_CLUSTERS:
+            city_aliases = cls.REGIONAL_CLUSTERS[city_lower]
+
         def add_q(q_str: str):
             q_clean = " ".join(q_str.split()).strip()
             if q_clean and q_clean not in seen and len(queries) < max_queries:
                 seen.add(q_clean)
                 queries.append(q_clean)
 
-        # 1. Natural Site Dorks with Role Synonyms
-        for role in roles[:8]:
-            if clean_region and clean_niche:
-                add_q(f'site:instagram.com {clean_region} {clean_niche} {role}')
-                add_q(f'site:instagram.com {clean_region} {role}')
-            elif clean_region:
-                add_q(f'site:instagram.com {clean_region} {role}')
+        # 1. Family 1: Bio Signal & Collaboration Inquiries (Discovers real creators, not keyword usernames)
+        for sig in cls.BIO_SIGNALS[:5]:
+            if primary_city and clean_niche:
+                add_q(f'site:instagram.com "{primary_city}" "{clean_niche}" "{sig}"')
+                add_q(f'site:instagram.com "based in {primary_city}" {clean_niche}')
+            elif primary_city:
+                add_q(f'site:instagram.com "{primary_city}" "{sig}"')
             elif clean_niche:
-                add_q(f'site:instagram.com {clean_niche} {role}')
+                add_q(f'site:instagram.com "{clean_niche}" "{sig}"')
 
-        # 2. User Keyword combinations
+        # 2. Family 2: Role Synonyms & Specialized Content Creators
+        for role in roles[:8]:
+            if primary_city:
+                add_q(f'site:instagram.com "{primary_city}" {role}')
+            elif clean_niche:
+                add_q(f'site:instagram.com {role}')
+
+        # 3. Family 3: Regional Cluster Synonyms (e.g., Gurgaon, Noida for Delhi)
+        if len(city_aliases) > 1 and clean_niche:
+            for alias in city_aliases[1:5]:
+                add_q(f'site:instagram.com "{alias}" {clean_niche} creator')
+                add_q(f'site:instagram.com "{alias}" {roles[0]}')
+
+        # 4. Family 4: User-Supplied Keywords combined with Region
         for ukw in user_kws[:4]:
-            if clean_region and clean_niche:
-                add_q(f'site:instagram.com {clean_region} {clean_niche} {ukw}')
-                add_q(f'site:instagram.com {clean_region} {ukw}')
-            elif clean_region:
-                add_q(f'site:instagram.com {clean_region} {ukw}')
+            if primary_city and clean_niche:
+                add_q(f'site:instagram.com "{primary_city}" {clean_niche} {ukw}')
+            elif primary_city:
+                add_q(f'site:instagram.com "{primary_city}" {ukw}')
             elif clean_niche:
                 add_q(f'site:instagram.com {clean_niche} {ukw}')
 
-        # 3. Hashtag-Based Discovery Dorks
-        if clean_region and clean_niche:
-            tag_city_niche = f"#{clean_region.lower().replace(' ', '')}{clean_niche.lower()}"
-            tag_city_creator = f"#{clean_region.lower().replace(' ', '')}creator"
-            add_q(f'site:instagram.com {tag_city_niche}')
-            add_q(f'site:instagram.com {tag_city_creator}')
-        elif clean_niche:
-            tag_niche = f"#{clean_niche.lower()}creator"
-            add_q(f'site:instagram.com {tag_niche}')
-
-        # 4. Natural URL Patterns
-        for role in roles[:5]:
-            if clean_region and clean_niche:
-                add_q(f'instagram.com/ {clean_region} {clean_niche} {role}')
-            elif clean_region:
-                add_q(f'instagram.com/ {clean_region} {role}')
+        # 5. Family 5: Natural URL Paths & Inverted Location Markers
+        for role in roles[:4]:
+            if primary_city:
+                add_q(f'instagram.com/ "{primary_city}" {role}')
             elif clean_niche:
-                add_q(f'instagram.com/ {clean_niche} {role}')
+                add_q(f'instagram.com/ {role}')
 
-        # 5. Inverted Niche-First Natural Queries
-        if clean_niche and clean_region:
-            add_q(f'site:instagram.com {clean_niche} creator based in {clean_region}')
-            add_q(f'site:instagram.com {clean_niche} influencer {clean_region}')
-
-        # 6. City Alias variations
-        city_lower = clean_region.lower()
-        if city_lower in cls.CITY_ALIASES and clean_niche:
-            for alias in cls.CITY_ALIASES[city_lower]:
-                if alias.lower() != clean_region.lower():
-                    add_q(f'site:instagram.com {alias} {clean_niche} creator')
-                    add_q(f'site:instagram.com {alias} {clean_niche} influencer')
+        # 6. Family 6: Hashtag Communities
+        if primary_city and clean_niche:
+            city_slug = primary_city.lower().replace(" ", "")
+            niche_slug = clean_niche.lower().replace(" ", "")
+            add_q(f'site:instagram.com "#{city_slug}{niche_slug}"')
+            add_q(f'site:instagram.com "#{city_slug}creators"')
+        elif clean_niche:
+            add_q(f'site:instagram.com "#{clean_niche.lower()}creator"')
 
         return queries

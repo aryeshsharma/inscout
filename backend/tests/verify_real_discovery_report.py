@@ -6,17 +6,15 @@ import warnings
 warnings.filterwarnings("ignore")
 sys.stdout.reconfigure(encoding='utf-8')
 
-from app.discovery.engine import DiscoveryEngine
 from app.models.search import SearchRequest
-from app.services.query_expansion import QueryExpansionEngine
 from app.discovery.search_provider import SearchDiscoveryProvider
 
-async def run_phase8_audit():
+async def run_forensic_benchmarks():
     provider = SearchDiscoveryProvider()
 
     test_scenarios = [
         {
-            "id": "TEST A",
+            "id": "BENCHMARK 1",
             "name": "Delhi + Fashion (1K–10K)",
             "req": SearchRequest(
                 region="Delhi",
@@ -29,20 +27,33 @@ async def run_phase8_audit():
             )
         },
         {
-            "id": "TEST B",
-            "name": "Delhi + Fashion (10K–100K)",
+            "id": "BENCHMARK 2",
+            "name": "Delhi + Travel (1K–10K)",
             "req": SearchRequest(
                 region="Delhi",
-                niche="Fashion",
-                followers_min=10000,
-                followers_max=100000,
-                keywords=["model", "creator"],
+                niche="Travel",
+                followers_min=1000,
+                followers_max=10000,
+                keywords=["creator", "travel"],
                 provider="search",
                 max_results=100
             )
         },
         {
-            "id": "TEST C",
+            "id": "BENCHMARK 3",
+            "name": "Delhi + Travel (10K–50K)",
+            "req": SearchRequest(
+                region="Delhi",
+                niche="Travel",
+                followers_min=10000,
+                followers_max=50000,
+                keywords=["traveler", "vlog"],
+                provider="search",
+                max_results=100
+            )
+        },
+        {
+            "id": "BENCHMARK 4",
             "name": "Mumbai + Beauty (10K–100K)",
             "req": SearchRequest(
                 region="Mumbai",
@@ -55,7 +66,7 @@ async def run_phase8_audit():
             )
         },
         {
-            "id": "TEST D",
+            "id": "BENCHMARK 5",
             "name": "Bangalore + Technology (10K–500K)",
             "req": SearchRequest(
                 region="Bangalore",
@@ -66,86 +77,82 @@ async def run_phase8_audit():
                 provider="search",
                 max_results=100
             )
-        },
-        {
-            "id": "TEST E",
-            "name": "Delhi + Travel (10K–50K)",
-            "req": SearchRequest(
-                region="Delhi",
-                niche="Travel",
-                followers_min=10000,
-                followers_max=50000,
-                keywords=["traveler", "vlog"],
-                provider="search",
-                max_results=100
-            )
         }
     ]
 
-    print("==================================================================", flush=True)
-    print("INSCOUT DISCOVERY ENGINE V2 — PHASE 8 REAL SEARCHES AUDIT REPORT", flush=True)
-    print("==================================================================", flush=True)
+    print("==================================================================================", flush=True)
+    print("INSCOUT DISCOVERY ENGINE REDESIGN — FORENSIC BENCHMARK REPORT", flush=True)
+    print("==================================================================================", flush=True)
 
     summary_rows = []
 
     for test in test_scenarios:
         req = test["req"]
-        queries = QueryExpansionEngine.expand_queries(req, max_queries=25)
         
         start_time = time.perf_counter()
-        profiles, c_disc, p_ver, p_mat = await provider.discover_profiles_with_metrics(req)
+        (
+            profiles,
+            c_disc,
+            u_cand,
+            p_ver,
+            f_pass,
+            rn_pass,
+            q_gen,
+            q_exec,
+            pag_used
+        ) = await provider.discover_profiles_with_metrics(req)
         elapsed_sec = round(time.perf_counter() - start_time, 2)
 
-        with_followers = sum(1 for p in profiles if p.followers is not None)
-        with_region = sum(1 for p in profiles if p.region is not None)
-        
-        # Verify 1.9M Komal Pandey is NOT in 1K-10K
-        if test["id"] == "TEST A":
+        # Verification: Komal Pandey must never be in 1K-10K
+        if "1K–10K" in test["name"]:
             kp_found = any(p.username.lower() == "komalpandeyofficial" for p in profiles)
             assert not kp_found, "FATAL: Komal Pandey (1.9M) found in 1K-10K filter!"
+
+        # Verification: Follower range must be strictly respected
+        min_f = req.followers_min or 0
+        max_f = req.followers_max or float('inf')
+        for p in profiles:
+            assert p.followers is not None, f"Profile {p.username} has unknown followers"
+            assert min_f <= p.followers <= max_f, f"Profile @{p.username} ({p.followers}) violates range {min_f}-{max_f}"
 
         row = {
             "id": test["id"],
             "name": test["name"],
-            "queries": len(queries),
-            "raw_candidates": c_disc,
-            "duplicates_removed": max(0, c_disc - p_ver),
-            "verified_profiles": p_ver,
-            "with_followers": with_followers,
-            "passing_follower_filter": p_mat,
-            "final_matching": p_mat,
-            "final_displayed": len(profiles),
+            "q_gen": q_gen,
+            "q_exec": q_exec,
+            "pag": "Yes" if pag_used else "No",
+            "c_disc": c_disc,
+            "u_cand": u_cand,
+            "p_ver": p_ver,
+            "f_pass": f_pass,
+            "rn_pass": rn_pass,
+            "returned": len(profiles),
             "duration": elapsed_sec
         }
         summary_rows.append(row)
 
-        print(f"\n------------------------------------------------------------------", flush=True)
+        print(f"\n----------------------------------------------------------------------------------", flush=True)
         print(f"[{test['id']}] {test['name']}", flush=True)
         print(f"  * Search Criteria: Region='{req.region}', Niche='{req.niche}', Followers={req.followers_min:,}–{req.followers_max:,}", flush=True)
-        print(f"  * Queries Generated: {len(queries)}", flush=True)
-        print(f"  * Raw Candidates Discovered: {c_disc}", flush=True)
-        print(f"  * Duplicates Removed: {max(0, c_disc - p_ver)}", flush=True)
-        print(f"  * Verified Public Profiles: {p_ver}", flush=True)
-        print(f"  * Profiles Passing Follower Filter ({req.followers_min:,}–{req.followers_max:,}): {p_mat}", flush=True)
-        print(f"  * Profiles Passing Region & Niche Filters: {p_mat}", flush=True)
-        print(f"  * Final Matching Profiles: {p_mat}", flush=True)
-        print(f"  * Final Displayed Profiles: {len(profiles)}", flush=True)
-        print(f"  * Discovery Duration: {elapsed_sec}s", flush=True)
+        print(f"  * Queries Generated: {q_gen} | Queries Executed: {q_exec} | Pagination: {'Yes' if pag_used else 'No'}", flush=True)
+        print(f"  * Raw Candidates: {c_disc} | Unique Deduplicated: {u_cand} | Verified Profiles: {p_ver}", flush=True)
+        print(f"  * Passed Follower Filter: {f_pass} | Passed Region & Niche Filters: {rn_pass}", flush=True)
+        print(f"  * Final Returned Profiles: {len(profiles)} (Time: {elapsed_sec}s)", flush=True)
         
-        print(f"\n  Top Final Profiles (First {min(10, len(profiles))}):", flush=True)
-        for idx, p in enumerate(profiles[:10], 1):
+        print(f"\n  Inspected Profiles (Top {min(8, len(profiles))}):", flush=True)
+        for idx, p in enumerate(profiles[:8], 1):
             f_str = f"{p.followers:,}" if p.followers else "Unknown"
-            print(f"    {idx:2d}. @{p.username:<25} | Followers: {f_str:<10} | Region: {p.region or 'N/A':<10} | Niche: {req.niche:<10} | Score: {p.match_score}/100", flush=True)
+            print(f"    {idx:2d}. @{p.username:<26} | Followers: {f_str:<10} | Region: {p.region or 'N/A':<10} | Score: {p.match_score}/100", flush=True)
             print(f"        URL: {p.profile_url}", flush=True)
             print(f"        Tags: {p.tags}", flush=True)
 
-    print("\n==================================================================", flush=True)
-    print("PHASE 8 AUDIT SUMMARY TABLE", flush=True)
-    print("==================================================================", flush=True)
-    print(f"{'Test':<8} | {'Criteria':<32} | {'Queries':<7} | {'Raw':<5} | {'Verified':<8} | {'Matched':<7} | {'Displayed':<9} | {'Time':<6}", flush=True)
-    print("-" * 92, flush=True)
+    print("\n==================================================================================", flush=True)
+    print("FORENSIC BENCHMARK SUMMARY TABLE", flush=True)
+    print("==================================================================================", flush=True)
+    print(f"{'Benchmark':<13} | {'Criteria':<32} | {'Queries':<7} | {'Raw':<5} | {'Unique':<6} | {'Verified':<8} | {'Follower':<8} | {'Matched':<7} | {'Time':<6}", flush=True)
+    print("-" * 105, flush=True)
     for r in summary_rows:
-        print(f"{r['id']:<8} | {r['name']:<32} | {r['queries']:<7} | {r['raw_candidates']:<5} | {r['verified_profiles']:<8} | {r['final_matching']:<7} | {r['final_displayed']:<9} | {r['duration']:<6}s", flush=True)
+        print(f"{r['id']:<13} | {r['name']:<32} | {r['q_gen']:<7} | {r['c_disc']:<5} | {r['u_cand']:<6} | {r['p_ver']:<8} | {r['f_pass']:<8} | {r['returned']:<7} | {r['duration']:<6}s", flush=True)
 
 if __name__ == "__main__":
-    asyncio.run(run_phase8_audit())
+    asyncio.run(run_forensic_benchmarks())

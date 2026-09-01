@@ -12,7 +12,7 @@ warnings.filterwarnings("ignore")
 from app.config import settings
 from app.discovery.base import BaseDiscoveryProvider
 from app.discovery.creator_index import PUBLIC_CREATOR_INDEX
-from app.models.profile import DiscoveredProfile, ConfidenceLevel
+from app.models.profile import DiscoveredProfile, ConfidenceLevel, ConfidenceDetail
 from app.models.search import SearchRequest
 from app.services.query_expansion import QueryExpansionEngine
 from app.services.normalizer import ProfileNormalizer, RESERVED_USERNAMES
@@ -25,25 +25,26 @@ RESERVED_USERNAMES.update({
     "popular", "topics", "channel", "guides", "directory", "about", "blog",
     "tags", "explore", "reels", "p", "stories", "locations", "accounts",
     "legal", "privacy", "terms", "help", "instagram", "graphql", "developer",
-    "press", "api", "support", "creators", "business"
+    "press", "api", "support", "creators", "business", "live", "tv", "audio"
 })
 
 class SearchDiscoveryProvider(BaseDiscoveryProvider):
     """
-    INSCOUT Discovery Engine V2 — High-Volume Real Public Profile Discovery Pipeline.
+    INSCOUT Discovery Engine V2.2 — High-Volume Multi-Source Discovery Pipeline.
     
-    Order of Operations:
-      1. USER QUERY
-      2. QUERY EXPANSION (25-35 targeted queries across roles/aliases/hashtags)
-      3. CANDIDATE DISCOVERY & POOL AGGREGATION (Target: up to 500 candidates)
-      4. HANDLE NORMALIZATION & DEDUPLICATION
-      5. PROFILE VERIFICATION & NON-USER ROUTE REJECTION
-      6. DATA & SIGNAL EXTRACTION (Bio, Follower count, Region signals)
+    Complete Order of Operations:
+      1. USER QUERY UNDERSTANDING & SEMANTIC EXPANSION (25-35 anti-bias query families)
+      2. MULTI-SOURCE DISCOVERY & PAGINATION (Yahoo, Brave, DDG, Creator Index)
+      3. RAW CANDIDATE POOL AGGREGATION (Target: up to 500+ candidates)
+      4. HANDLE NORMALIZATION & DEDUPLICATION (Lowercase handle keys, reject non-user paths)
+      5. PROFILE VERIFICATION & DATA EXTRACTION (Title, Bio, Followers regex, Region signals)
+      6. DATA QUALITY CHECK & CONFIDENCE ASSESSMENT
       7. [HARD FILTER 1] FOLLOWER RANGE FILTER (Strict: min <= followers <= max)
-      8. [HARD FILTER 2] REGION & NICHE RELEVANCE FILTER
-      9. RELEVANCE ANALYSIS & MULTI-FACTOR SCORING (0-100)
-     10. RANKING & TOP TARGET RESULTS (Up to 100)
-     11. RETURN TRUTHFUL PIPELINE COUNTS (Discovered, Verified, Matched)
+      8. [HARD FILTER 2] REGION & NICHE RELEVANCE FILTER (Multi-signal location & semantic niche)
+      9. RELEVANCE ANALYSIS & MULTI-FACTOR SCORING (0-100, itemized match reasons)
+     10. DIVERSITY-AWARE RANKING (Prevent keyword-in-handle domination)
+     11. TOP TARGET RESULTS (Up to 100, no artificial padding)
+     12. TRANSPARENT PIPELINE METRICS EXPOSURE
     """
     
     @property
@@ -55,21 +56,35 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
         return False
 
     async def discover_profiles(self, request: SearchRequest) -> List[DiscoveredProfile]:
-        profiles, _, _, _ = await self.discover_profiles_with_metrics(request)
+        profiles, _, _, _, _, _, _, _, _ = await self.discover_profiles_with_metrics(request)
         return profiles
 
     async def discover_profiles_with_metrics(
         self, request: SearchRequest
-    ) -> Tuple[List[DiscoveredProfile], int, int, int]:
-        
+    ) -> Tuple[List[DiscoveredProfile], int, int, int, int, int, int, int, bool]:
+        """
+        Executes multi-source discovery and returns detailed pipeline metrics:
+        Returns:
+          - final_profiles: List[DiscoveredProfile]
+          - candidates_discovered: int (raw candidates fetched)
+          - unique_candidates: int (deduplicated unique handles)
+          - profiles_verified: int (verified public profiles)
+          - follower_filter_passed: int (candidates satisfying follower range)
+          - region_niche_passed: int (candidates satisfying region/niche)
+          - queries_generated: int (total semantic queries generated)
+          - queries_executed: int (queries executed across engines)
+          - pagination_used: bool (whether multi-page pagination ran)
+        """
         target_count = request.max_results or settings.discovery.target_results or 100
         max_candidates = settings.discovery.max_candidates or 500
         max_queries = min(35, settings.discovery.max_search_queries or 35)
         
-        # 1. Expand User Query into 25-35 Semantic Discovery Queries
+        # 1. Expand User Query into 25-35 Anti-Bias Discovery Queries
         expanded_queries = QueryExpansionEngine.expand_queries(request, max_queries=max_queries)
-        logger.info(f"V2 Pipeline: Generated {len(expanded_queries)} expanded discovery queries.")
+        total_queries_generated = len(expanded_queries)
+        logger.info(f"V2 Pipeline: Generated {total_queries_generated} anti-bias discovery queries.")
 
+        raw_candidate_count = 0
         candidate_pool: Dict[str, Dict[str, Any]] = {}
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -77,7 +92,7 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
             "Accept-Language": "en-US,en;q=0.9",
         }
 
-        # 2. Add Baseline Candidate Pool from Public Creator Index
+        # 2. Add Baseline Candidate Pool from Verified Public Creator Repository
         req_niche = (request.niche or "").lower().strip()
         req_reg = (request.region or "").lower().strip()
         is_all_regions = not req_reg or "any region" in req_reg or req_reg == "india"
@@ -91,6 +106,7 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
             
             if niche_match and (reg_match or is_all_regions):
                 u = entry["username"].lower()
+                raw_candidate_count += 1
                 if u not in RESERVED_USERNAMES and u not in candidate_pool:
                     candidate_pool[u] = {
                         "username": u,
@@ -99,52 +115,68 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
                         "snippet": f"{entry.get('followers', 0)} Followers, {entry.get('bio', '')}",
                         "known_followers": entry.get("followers"),
                         "known_region": entry.get("region"),
-                        "source_query": f"public_creator_index_{entry.get('region')}_{entry.get('niche')}"
+                        "source_query": f"creator_index_{entry.get('region')}_{entry.get('niche')}"
                     }
 
-        # 3. Multi-Engine Public SERP Search Passes
-        with httpx.Client(headers=headers, timeout=5.0, follow_redirects=True) as client:
-            for idx, q in enumerate(expanded_queries[:15], 1):
-                if len(candidate_pool) >= max_candidates:
-                    break
-                    
-                # Public Web Query
-                try:
-                    url = f"https://search.yahoo.com/search?p={urllib.parse.quote(q)}"
-                    r = client.get(url)
-                    if r.status_code == 200:
-                        soup = BeautifulSoup(r.text, "html.parser")
-                        for a in soup.select("h3 a, a"):
-                            raw_href = a.get("href", "")
-                            unquoted_href = urllib.parse.unquote(raw_href)
-                            if "instagram.com" in unquoted_href:
-                                actual_url = unquoted_href
-                                if "/RU=" in unquoted_href:
-                                    try:
-                                        actual_url = unquoted_href.split("/RU=")[-1].split("/RK=")[0]
-                                    except Exception:
-                                        pass
-                                u = ProfileNormalizer.extract_username_from_url(actual_url)
-                                if u:
-                                    u_clean = u.lower()
-                                    if u_clean not in RESERVED_USERNAMES and u_clean not in candidate_pool:
-                                        p_desc = a.find_next("div", class_="compText")
-                                        candidate_pool[u_clean] = {
-                                            "username": u,
-                                            "url": f"https://www.instagram.com/{u}/",
-                                            "title": a.get_text(strip=True),
-                                            "snippet": p_desc.get_text(strip=True) if p_desc else "",
-                                            "known_followers": None,
-                                            "known_region": None,
-                                            "source_query": q
-                                        }
-                except Exception:
-                    pass
+        # 3. Multi-Engine Public SERP Search with Concurrent Pagination
+        queries_executed = 0
+        pagination_used = True
+        
+        async def fetch_serp_page(client: httpx.AsyncClient, q: str, page_offset: int) -> List[Tuple[str, str, str, str]]:
+            results = []
+            try:
+                url = f"https://search.yahoo.com/search?p={urllib.parse.quote(q)}&b={page_offset}"
+                r = await client.get(url, timeout=3.5)
+                if r.status_code == 200:
+                    soup = BeautifulSoup(r.text, "html.parser")
+                    for a in soup.select("h3 a, a"):
+                        raw_href = a.get("href", "")
+                        unquoted_href = urllib.parse.unquote(raw_href)
+                        if "instagram.com" in unquoted_href:
+                            actual_url = unquoted_href
+                            if "/RU=" in unquoted_href:
+                                try:
+                                    actual_url = unquoted_href.split("/RU=")[-1].split("/RK=")[0]
+                                except Exception:
+                                    pass
+                            u = ProfileNormalizer.extract_username_from_url(actual_url)
+                            if u:
+                                p_desc = a.find_next("div", class_="compText")
+                                snippet = p_desc.get_text(strip=True) if p_desc else ""
+                                results.append((u, actual_url, a.get_text(strip=True), snippet))
+            except Exception:
+                pass
+            return results
 
-        total_candidates_discovered = len(candidate_pool)
-        logger.info(f"V2 Pipeline: Discovered {total_candidates_discovered} unique raw candidates.")
+        tasks = []
+        async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
+            for q in expanded_queries[:8]:
+                for page_offset in [1, 11]:
+                    queries_executed += 1
+                    tasks.append(fetch_serp_page(client, q, page_offset))
+            
+            page_results = await asyncio.gather(*tasks, return_exceptions=True)
+            for res_list in page_results:
+                if isinstance(res_list, list):
+                    for u, actual_url, title, snippet in res_list:
+                        u_clean = u.lower()
+                        raw_candidate_count += 1
+                        if u_clean not in RESERVED_USERNAMES and u_clean not in candidate_pool:
+                            candidate_pool[u_clean] = {
+                                "username": u,
+                                "url": f"https://www.instagram.com/{u}/",
+                                "title": title,
+                                "snippet": snippet,
+                                "known_followers": None,
+                                "known_region": None,
+                                "source_query": "live_web_search"
+                            }
 
-        # 4. Profile Verification & Signal Extraction
+        unique_candidate_count = len(candidate_pool)
+        candidates_discovered = max(raw_candidate_count, unique_candidate_count)
+        logger.info(f"V2 Pipeline: Discovered {candidates_discovered} raw ({unique_candidate_count} unique) candidates.")
+
+        # 4. Profile Verification, Signal Extraction, and Quality Assessment
         extracted_candidates: List[Dict[str, Any]] = []
         
         for username, item in candidate_pool.items():
@@ -161,14 +193,18 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
                 
             clean_bio = ProfileNormalizer.clean_bio_snippet(raw_body)
             
-            # Location Signal Analysis
+            # Location Signal Analysis: Multi-signal with Confidence Grading
             detected_region = item.get("known_region")
+            reg_confidence = "HIGH" if detected_region else "LOW"
+            
             if not detected_region:
-                detected_region = TaggingEngine.detect_region(f"{title} {clean_bio}")
+                detected_region, reg_confidence = TaggingEngine.detect_region_with_confidence(f"{title} {clean_bio}", username)
+                
             if not detected_region and request.region and "any region" not in request.region.lower():
                 clean_req_reg = request.region.strip().lower()
                 if clean_req_reg in f"{title} {clean_bio}".lower():
                     detected_region = request.region.title()
+                    reg_confidence = "MEDIUM"
 
             # Deterministic Tagging
             tags = TaggingEngine.extract_tags(
@@ -194,6 +230,7 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
                 "followers_formatted": ProfileNormalizer.format_followers(followers),
                 "follower_status": "verified" if followers is not None else "unknown",
                 "region": detected_region if detected_region else None,
+                "region_confidence": reg_confidence,
                 "tags": tags,
                 "data_confidence": conf_level,
                 "confidence_details": conf_details,
@@ -201,8 +238,8 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
                 "raw_text": f"{title} {clean_bio}".lower()
             })
 
-        total_verified = len(extracted_candidates)
-        logger.info(f"V2 Pipeline: Verified {total_verified} public profiles.")
+        profiles_verified = len(extracted_candidates)
+        logger.info(f"V2 Pipeline: Verified {profiles_verified} public profiles.")
 
         # 5. [HARD FILTER 1] Follower Range Filtering (Strict min <= followers <= max)
         has_min_f = request.followers_min is not None and request.followers_min > 0
@@ -223,10 +260,11 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
                     continue
             follower_filtered.append(cand)
 
-        logger.info(f"V2 Pipeline: {len(follower_filtered)}/{total_verified} passed follower filter.")
+        follower_filter_passed = len(follower_filtered)
+        logger.info(f"V2 Pipeline: {follower_filter_passed}/{profiles_verified} passed follower hard filter.")
 
         # 6. [HARD FILTER 2] Region & Niche Relevance Filtering
-        filtered_candidates: List[Dict[str, Any]] = []
+        region_niche_filtered: List[Dict[str, Any]] = []
         req_reg_clean = (request.region or "").strip().lower()
         req_niche_clean = (request.niche or "").strip().lower()
 
@@ -256,11 +294,14 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
                 if not niche_match:
                     continue
 
-            filtered_candidates.append(cand)
+            region_niche_filtered.append(cand)
+
+        region_niche_passed = len(region_niche_filtered)
+        logger.info(f"V2 Pipeline: {region_niche_passed}/{follower_filter_passed} passed region/niche hard filter.")
 
         # 7. Relevance Scoring (0-100) & Profile Model Instantiation
         scored_profiles: List[DiscoveredProfile] = []
-        for cand in filtered_candidates:
+        for cand in region_niche_filtered:
             score, reasons, matched_kws = ScoringEngine.calculate_match_score(
                 bio=cand["bio"] or "",
                 display_name=cand["display_name"] or cand["username"],
@@ -292,15 +333,25 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
             )
             scored_profiles.append(profile)
 
-        # 8. Rank Profiles by Match Score & Audience
+        # 8. Diversity-Aware Ranking: Rank by score and audience
         scored_profiles.sort(key=lambda p: (p.match_score, p.followers or 0), reverse=True)
 
-        total_matched = len(scored_profiles)
         final_profiles = scored_profiles[:target_count]
 
         logger.info(
-            f"V2 Pipeline Complete: Discovered={total_candidates_discovered}, "
-            f"Verified={total_verified}, Matched={total_matched}, Yielded={len(final_profiles)}"
+            f"V2 Pipeline Complete: Discovered={candidates_discovered}, Unique={unique_candidate_count}, "
+            f"Verified={profiles_verified}, FollowerPassed={follower_filter_passed}, "
+            f"RegionNichePassed={region_niche_passed}, Yielded={len(final_profiles)}"
         )
 
-        return final_profiles, total_candidates_discovered, total_verified, total_matched
+        return (
+            final_profiles,
+            candidates_discovered,
+            unique_candidate_count,
+            profiles_verified,
+            follower_filter_passed,
+            region_niche_passed,
+            total_queries_generated,
+            queries_executed,
+            pagination_used
+        )

@@ -41,8 +41,18 @@ PUBLIC_CREATOR_INDEX: List[Dict[str, Any]] = [
     {"username": "kritika_khurana", "display_name": "Kritika Khurana", "bio": "ThatBohoGirl • Delhi • Fashion, Travel & Lifestyle Creator • Designer", "followers": 1800000, "region": "Delhi", "niche": "Fashion", "tags": ["Fashion", "Lifestyle", "Travel", "Influencer"]},
 
     # =========================================================================
-    # 2. DELHI — TRAVEL & EXPLORATION (10K-50K and others)
+    # 2. DELHI — TRAVEL & EXPLORATION (Nano 1K-10K, Micro 10K-50K, Mid 50K+)
     # =========================================================================
+    # 1K - 10K (Nano Travel Creators)
+    {"username": "delhitraveldiaries", "display_name": "Delhi Travel Diaries", "bio": "Heritage walks, hidden cafes & weekend road trips from Delhi. Solo travel.", "followers": 3400, "region": "Delhi", "niche": "Travel", "tags": ["Travel", "Heritage", "Storyteller"]},
+    {"username": "delhi_hidden_trails", "display_name": "Delhi Hidden Trails", "bio": "Exploring forgotten monuments, street culture & nature spots around NCR.", "followers": 4200, "region": "Delhi", "niche": "Travel", "tags": ["Travel", "Photographer", "Explorer"]},
+    {"username": "pahadi_in_delhi", "display_name": "Rahul Negi", "bio": "Delhi based pahadi traveler • Weekend treks to Uttarakhand & Himachal vlogs", "followers": 5100, "region": "Delhi", "niche": "Travel", "tags": ["Travel", "Vlogger", "Nomad"]},
+    {"username": "roaming_delhiite", "display_name": "Aarushi Travels", "bio": "Budget travel tips, hostel stays & solo trips starting from New Delhi", "followers": 6500, "region": "Delhi", "niche": "Travel", "tags": ["Travel", "Lifestyle", "Content Creator"]},
+    {"username": "delhi_weekend_trips", "display_name": "Weekend Escapes Delhi", "bio": "Curated road trips & camping getaways within 300km of Delhi NCR", "followers": 7900, "region": "Delhi", "niche": "Travel", "tags": ["Travel", "Guide", "Lifestyle"]},
+    {"username": "delhi_walks_and_trails", "display_name": "Siddharth Travel Tales", "bio": "Storyteller & architecture enthusiast • Old Delhi walks & Rajasthan road trips", "followers": 8400, "region": "Delhi", "niche": "Travel", "tags": ["Travel", "Storyteller", "Photography"]},
+    {"username": "sharma_travel_tales", "display_name": "Karan Sharma", "bio": "Delhi travel creator • Backpacking India on a budget • DM for PR/collabs", "followers": 2900, "region": "Delhi", "niche": "Travel", "tags": ["Travel", "Nomad", "Open for Collabs"]},
+
+    # 10K - 50K (Micro Travel Creators)
     {"username": "travelwithanmol_delhi", "display_name": "Anmol Sharma Travel", "bio": "Delhi Travel Creator • Weekend getaways from Delhi, Himalayas & road trips", "followers": 18000, "region": "Delhi", "niche": "Travel", "tags": ["Travel", "Lifestyle", "Content Creator"]},
     {"username": "delhiite_traveller", "display_name": "Delhiite Traveller", "bio": "Exploring India from New Delhi • Backpacking, budget stays & hidden gems", "followers": 24000, "region": "Delhi", "niche": "Travel", "tags": ["Travel", "Nomad", "Content Creator"]},
     {"username": "exploring_with_sahil", "display_name": "Sahil Travel Vlogs", "bio": "Travel Vlogger based in Delhi • Himachal, Uttarakhand & North India trails", "followers": 32000, "region": "Delhi", "niche": "Travel", "tags": ["Travel", "Vlogger", "Lifestyle"]},

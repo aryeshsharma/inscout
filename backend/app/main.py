@@ -14,8 +14,8 @@ from app.storage.session_store import session_store
 
 app = FastAPI(
     title=settings.app_name,
-    description="High-Volume Real Public Instagram Profile Discovery & Filtering Engine API (V2)",
-    version="2.0.0"
+    description="High-Volume Real Public Instagram Profile Discovery & Filtering Engine API (V2.2)",
+    version="2.2.0"
 )
 
 # Enable CORS
@@ -34,7 +34,7 @@ async def health_check():
     return HealthResponse(
         status="ok",
         app_name=settings.app_name,
-        version="2.0.0",
+        version="2.2.0",
         active_providers=["search", "meta_business_discovery"]
     )
 
@@ -43,9 +43,8 @@ async def execute_search(request: SearchRequest):
     start_time = time.perf_counter()
     search_id = str(uuid.uuid4())
     
-    profiles, provider_used, is_demo, warning, cand_count, ver_count, match_count = (
-        await discovery_engine.execute_discovery(request)
-    )
+    discovery_data = await discovery_engine.execute_discovery(request)
+    profiles = discovery_data.get("profiles", [])
     
     # Collect unique available tags and regions across results for quick filtering
     tags_set: Set[str] = set()
@@ -63,16 +62,25 @@ async def execute_search(request: SearchRequest):
         search_id=search_id,
         query=request,
         total_found=len(profiles),
-        candidates_discovered=cand_count,
-        profiles_verified=ver_count,
-        profiles_matched=match_count,
-        provider_used=provider_used,
-        is_demo=is_demo,
+        candidates_discovered=discovery_data.get("candidates_discovered", 0),
+        unique_candidates=discovery_data.get("unique_candidates", 0),
+        profiles_verified=discovery_data.get("profiles_verified", 0),
+        profiles_rejected=discovery_data.get("profiles_rejected", 0),
+        follower_filter_passed=discovery_data.get("follower_filter_passed", 0),
+        region_niche_passed=discovery_data.get("region_niche_passed", 0),
+        profiles_matched=discovery_data.get("profiles_matched", 0),
+        profiles_returned=discovery_data.get("profiles_returned", len(profiles)),
+        provider_used=discovery_data.get("provider_used", "search"),
+        discovery_sources=discovery_data.get("discovery_sources", ["public_web_search"]),
+        queries_generated=discovery_data.get("queries_generated", 0),
+        queries_executed=discovery_data.get("queries_executed", 0),
+        pagination_used=discovery_data.get("pagination_used", False),
+        is_demo=discovery_data.get("is_demo", False),
         profiles=profiles,
         available_tags=sorted(list(tags_set)),
         available_regions=sorted(list(regions_set)),
         execution_time_ms=execution_time_ms,
-        warning=warning
+        warning=discovery_data.get("warning")
     )
     
     session_store.save_search(search_id, response)

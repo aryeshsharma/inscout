@@ -1,5 +1,5 @@
 import re
-from typing import List, Set
+from typing import List, Set, Tuple
 
 class TaggingEngine:
     """
@@ -160,11 +160,39 @@ class TaggingEngine:
 
     @classmethod
     def detect_region(cls, text: str) -> str:
+        reg, _ = cls.detect_region_with_confidence(text)
+        return reg
+
+    @classmethod
+    def detect_region_with_confidence(cls, text: str, username: str = "") -> Tuple[str, str]:
+        """
+        Detects region using multi-signal evidence with confidence grading:
+          - HIGH: Explicit city / state / NCR signal in bio or profile description.
+          - MEDIUM: Explicit regional cluster alias in search context or body text.
+          - LOW / NONE: Username keyword alone is never treated as strong location evidence.
+        """
         if not text:
-            return ""
+            return "", "LOW"
+            
         text_lower = text.lower()
+        
+        # Primary check: Look for location phrases like "based in X", "living in X", "X / Y", "X, India"
         for region_name, variations in cls.REGION_KEYWORDS.items():
             for var in variations:
+                # High confidence markers
+                high_patterns = [
+                    r'\bbased in ' + re.escape(var) + r'\b',
+                    r'\bliving in ' + re.escape(var) + r'\b',
+                    r'\b' + re.escape(var) + r'\s*,\s*india\b',
+                    r'\b' + re.escape(var) + r'\s*ncr\b',
+                    r'\bnew ' + re.escape(var) + r'\b'
+                ]
+                if any(re.search(p, text_lower) for p in high_patterns):
+                    return region_name, "HIGH"
+                    
+                # Medium confidence: general word boundary match in bio/snippet
                 if re.search(r'\b' + re.escape(var) + r'\b', text_lower):
-                    return region_name
-        return ""
+                    return region_name, "MEDIUM"
+                    
+        return "", "LOW"
+

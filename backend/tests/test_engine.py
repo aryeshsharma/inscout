@@ -100,10 +100,10 @@ async def test_discovery_engine_v2():
         provider="search",
         max_results=30
     )
-    profiles, provider_used, is_demo, warning, cand_count, ver_count, match_count = (
-        await engine.execute_discovery(req)
-    )
-    assert provider_used == "search"
-    assert is_demo is False
-    assert cand_count >= 0
-    assert ver_count >= 0
+    res = await engine.execute_discovery(req)
+    assert res["provider_used"] == "search"
+    assert res["is_demo"] is False
+    assert res["candidates_discovered"] >= 0
+    assert res["profiles_verified"] >= 0
+    assert isinstance(res["profiles"], list)
+
