@@ -26,6 +26,7 @@ class DiscoveredProfile(BaseModel):
     bio: Optional[str] = None
     followers: Optional[int] = None
     followers_formatted: Optional[str] = "Not available"
+    follower_status: str = "verified"
     region: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
     matched_keywords: List[str] = Field(default_factory=list)
