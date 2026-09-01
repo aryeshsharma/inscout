@@ -34,6 +34,8 @@ export interface DiscoveredProfile {
   posts?: number | null;
   engagement_rate?: number | null;
   category?: string | null;
+  discovery_source?: string;
+  source_query?: string | null;
 }
 
 export interface SearchRequest {
@@ -50,6 +52,9 @@ export interface SearchResponse {
   search_id: string;
   query: SearchRequest;
   total_found: number;
+  candidates_discovered: number;
+  profiles_verified: number;
+  profiles_matched: number;
   provider_used: string;
   is_demo: boolean;
   profiles: DiscoveredProfile[];

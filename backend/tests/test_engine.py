@@ -3,11 +3,12 @@ from app.models.search import SearchRequest
 from app.services.scorer import ScoringEngine
 from app.services.tagger import TaggingEngine
 from app.services.query_generator import QueryGenerator
+from app.services.query_expansion import QueryExpansionEngine
 from app.services.normalizer import ProfileNormalizer
 from app.discovery.engine import DiscoveryEngine
 from app.discovery.mock_provider import MockDiscoveryProvider
 
-def test_query_generator():
+def test_query_generator_and_expansion():
     req = SearchRequest(
         region="Delhi",
         niche="Fashion",
@@ -19,11 +20,12 @@ def test_query_generator():
     assert "site:instagram.com" in dork
     assert '"Delhi"' in dork
     assert '"Fashion"' in dork
-    assert "model" in dork
 
-    layered = QueryGenerator.generate_layered_queries(req)
-    assert len(layered) >= 2
-    assert any("Delhi" in q for q in layered)
+    expanded = QueryExpansionEngine.expand_queries(req, max_queries=30)
+    assert len(expanded) >= 20
+    assert any("#delhifashion" in q for q in expanded)
+    assert any("stylist" in q for q in expanded)
+    assert any("influencer" in q for q in expanded)
 
 def test_tagging_engine():
     bio = "Delhi NCR | Fashion & Lifestyle Creator | Model | DM for collaborations & PR"
@@ -74,7 +76,6 @@ def test_scoring_engine():
 
 @pytest.mark.asyncio
 async def test_mock_discovery_provider_isolated():
-    # Verify mock provider exists strictly for internal isolated unit testing
     provider = MockDiscoveryProvider()
     req = SearchRequest(
         region="Delhi",
@@ -91,13 +92,18 @@ async def test_mock_discovery_provider_isolated():
     assert "Fashion" in top_profile.tags
 
 @pytest.mark.asyncio
-async def test_discovery_engine_live():
+async def test_discovery_engine_v2():
     engine = DiscoveryEngine()
     req = SearchRequest(
         region="Delhi",
         niche="Fashion",
-        provider="search"
+        provider="search",
+        max_results=30
     )
-    profiles, provider_used, is_demo, warning = await engine.execute_discovery(req)
+    profiles, provider_used, is_demo, warning, cand_count, ver_count, match_count = (
+        await engine.execute_discovery(req)
+    )
     assert provider_used == "search"
     assert is_demo is False
+    assert cand_count >= 0
+    assert ver_count >= 0

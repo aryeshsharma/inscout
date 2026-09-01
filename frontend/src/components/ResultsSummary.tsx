@@ -15,7 +15,7 @@ export const ResultsSummary: React.FC<ResultsSummaryProps> = ({
   onExportCsv,
   isExporting,
 }) => {
-  const { query, total_found } = response;
+  const { query, total_found, candidates_discovered, profiles_verified, profiles_matched } = response;
 
   return (
     <div className="results-meta-bar">
@@ -23,6 +23,14 @@ export const ResultsSummary: React.FC<ResultsSummaryProps> = ({
         <div className="results-meta-title">
           Showing {filteredCount} of {total_found} Publicly Discoverable Profiles
         </div>
+
+        {/* Discovery Pipeline Transparency Counters */}
+        {candidates_discovered > 0 && (
+          <div style={{ fontSize: '0.76rem', color: '#38bdf8', marginTop: '2px', fontWeight: 500 }}>
+            {candidates_discovered} candidates discovered · {profiles_verified} verified · {profiles_matched} match your criteria
+          </div>
+        )}
+
         <div className="results-criteria-text">
           <span>Criteria: </span>
           {query.region ? <strong>{query.region}</strong> : 'All Regions'} ·{' '}

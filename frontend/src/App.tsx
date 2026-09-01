@@ -8,7 +8,7 @@ import { LoadingSkeleton } from './components/Common/LoadingSkeleton';
 import { EmptyState } from './components/Common/EmptyState';
 import { ApiClient } from './api/client';
 import { SearchRequest, SearchResponse, FilterState } from './types';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, ChevronDown } from 'lucide-react';
 
 export const App: React.FC = () => {
   const [apiConnected, setApiConnected] = useState(false);
@@ -17,6 +17,7 @@ export const App: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const [searchResponse, setSearchResponse] = useState<SearchResponse | null>(null);
+  const [displayLimit, setDisplayLimit] = useState(25);
 
   // Post-search filter & sorting state
   const [filterState, setFilterState] = useState<FilterState>({
@@ -42,7 +43,7 @@ export const App: React.FC = () => {
           followers_max: 50000,
           keywords: ['model', 'creator'],
           provider: 'search',
-          max_results: 30,
+          max_results: 100,
         });
       } catch (err) {
         console.error('API connection check failed:', err);
@@ -56,10 +57,12 @@ export const App: React.FC = () => {
   const handleSearch = async (request: SearchRequest) => {
     setIsLoading(true);
     setErrorMessage(null);
+    setDisplayLimit(25);
     try {
       const response = await ApiClient.searchProfiles({
         ...request,
         provider: 'search',
+        max_results: 100,
       });
       setSearchResponse(response);
       // Reset post-filters on fresh search
@@ -147,6 +150,14 @@ export const App: React.FC = () => {
     return list;
   }, [searchResponse, filterState]);
 
+  const visibleProfiles = useMemo(() => {
+    return filteredProfiles.slice(0, displayLimit);
+  }, [filteredProfiles, displayLimit]);
+
+  const handleLoadMore = () => {
+    setDisplayLimit((prev) => prev + 25);
+  };
+
   return (
     <div style={{ minHeight: '100vh', backgroundColor: 'var(--bg-app)' }}>
       <Header apiConnected={apiConnected} />
@@ -218,11 +229,32 @@ export const App: React.FC = () => {
             />
 
             {/* Discovered Profiles List */}
-            {filteredProfiles.length > 0 ? (
+            {visibleProfiles.length > 0 ? (
               <div className="profiles-list">
-                {filteredProfiles.map((profile) => (
+                {visibleProfiles.map((profile) => (
                   <ProfileCard key={profile.username} profile={profile} />
                 ))}
+
+                {/* Load More Button */}
+                {filteredProfiles.length > displayLimit && (
+                  <div style={{ display: 'flex', justifyContent: 'center', marginTop: '20px', marginBottom: '20px' }}>
+                    <button
+                      type="button"
+                      className="export-csv-btn"
+                      onClick={handleLoadMore}
+                      style={{
+                        padding: '10px 24px',
+                        fontSize: '0.88rem',
+                        fontWeight: 600,
+                        backgroundColor: '#181818',
+                        borderColor: '#333333',
+                      }}
+                    >
+                      <ChevronDown size={15} />
+                      Load More (Showing {visibleProfiles.length} of {filteredProfiles.length})
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
               <EmptyState

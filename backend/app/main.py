@@ -14,8 +14,8 @@ from app.storage.session_store import session_store
 
 app = FastAPI(
     title=settings.app_name,
-    description="Zero-cost Real Public Instagram Profile Discovery & Filtering Engine API",
-    version="1.0.0"
+    description="High-Volume Real Public Instagram Profile Discovery & Filtering Engine API (V2)",
+    version="2.0.0"
 )
 
 # Enable CORS
@@ -34,8 +34,8 @@ async def health_check():
     return HealthResponse(
         status="ok",
         app_name=settings.app_name,
-        version="1.0.0",
-        active_providers=["search"]
+        version="2.0.0",
+        active_providers=["search", "meta_business_discovery"]
     )
 
 @app.post("/api/search", response_model=SearchResponse)
@@ -43,7 +43,9 @@ async def execute_search(request: SearchRequest):
     start_time = time.perf_counter()
     search_id = str(uuid.uuid4())
     
-    profiles, provider_used, is_demo, warning = await discovery_engine.execute_discovery(request)
+    profiles, provider_used, is_demo, warning, cand_count, ver_count, match_count = (
+        await discovery_engine.execute_discovery(request)
+    )
     
     # Collect unique available tags and regions across results for quick filtering
     tags_set: Set[str] = set()
@@ -61,6 +63,9 @@ async def execute_search(request: SearchRequest):
         search_id=search_id,
         query=request,
         total_found=len(profiles),
+        candidates_discovered=cand_count,
+        profiles_verified=ver_count,
+        profiles_matched=match_count,
         provider_used=provider_used,
         is_demo=is_demo,
         profiles=profiles,
@@ -88,7 +93,7 @@ async def get_profile(username: str):
     return profile
 
 @app.get("/api/export/{search_id}")
-async def export_results(search_id: str, format: str = Query(default="csv", regex="^(csv|json)$")):
+async def export_results(search_id: str, format: str = Query(default="csv", pattern="^(csv|json)$")):
     search_res = session_store.get_search(search_id)
     if not search_res:
         raise HTTPException(status_code=404, detail="Search session expired or not found")
