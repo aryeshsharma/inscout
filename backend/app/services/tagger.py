@@ -3,7 +3,7 @@ from typing import List, Set, Tuple, Dict, Optional
 
 class TaggingEngine:
     """
-    Deterministic rule- and taxonomy-based tagging and qualification engine.
+    Deterministic rule- and taxonomy-based qualification and tagging engine.
     Analyzes profile bios and text snippets WITHOUT username-bias.
     """
     
@@ -11,7 +11,7 @@ class TaggingEngine:
         "Fashion": [
             "fashion", "style", "styling", "outfit", "ootd", "lookbook", "wardrobe",
             "couture", "apparel", "streetwear", "model", "modeling", "runway", "fashionista",
-            "menswear", "womenswear", "ethnic wear", "thrift", "sustainable fashion"
+            "menswear", "womenswear", "ethnic wear", "thrift", "sustainable fashion", "stylist"
         ],
         "Beauty": [
             "beauty", "makeup", "skincare", "mua", "cosmetics", "hair", "glam",
@@ -31,7 +31,7 @@ class TaggingEngine:
         ],
         "Travel": [
             "travel", "wanderlust", "traveler", "traveller", "explore", "backpacking", "destinations",
-            "itinerary", "voyage", "adventure", "nomad", "travelgram", "trips", "road trip", "trek"
+            "itinerary", "voyage", "adventure", "nomad", "travelgram", "trips", "road trip", "trek", "wanderer"
         ],
         "Technology": [
             "tech", "technology", "developer", "coding", "software", "ai", "engineer",
@@ -93,24 +93,53 @@ class TaggingEngine:
     
     # Regional clusters mapped to canonical city names
     REGION_CLUSTERS: Dict[str, List[str]] = {
-        "Delhi": ["delhi", "new delhi", "delhi ncr", "ncr", "gurugram", "gurgaon", "noida", "faridabad", "ghaziabad", "south delhi", "delhiite"],
-        "Mumbai": ["mumbai", "bombay", "bandra", "andheri", "south mumbai", "navi mumbai", "thane", "juhu", "mumbaikar"],
-        "Bangalore": ["bangalore", "bengaluru", "indiranagar", "koramangala", "whitefield", "hsr layout", "electronic city"],
-        "Hyderabad": ["hyderabad", "secunderabad", "cyberabad", "jubilee hills", "banjara hills", "gachibowli", "hyderabadi"],
-        "Chennai": ["chennai", "madras", "adyar", "t nagar", "anna nagar"],
-        "Kolkata": ["kolkata", "calcutta", "salt lake", "new town kolkata"],
-        "Pune": ["pune", "punekar", "koregaon park", "kothrud", "viman nagar", "baner"],
-        "Ahmedabad": ["ahmedabad", "gujarat", "gandhinagar"],
-        "Jaipur": ["jaipur", "pink city", "rajasthan"],
-        "Chandigarh": ["chandigarh", "mohali", "panchkula", "tricity"],
-        "Lucknow": ["lucknow", "gomti nagar", "hazratganj"],
-        "Goa": ["goa", "panjim", "north goa", "south goa"]
+        "Delhi": [
+            "delhi", "new delhi", "delhi ncr", "ncr", "gurugram", "gurgaon", "noida",
+            "faridabad", "ghaziabad", "south delhi", "north delhi", "west delhi",
+            "east delhi", "central delhi", "dwarka", "saket", "vasant kunj", "hauz khas", "delhiite"
+        ],
+        "Mumbai": [
+            "mumbai", "bombay", "bandra", "andheri", "juhu", "powai", "south mumbai",
+            "sobo", "navi mumbai", "thane", "worli", "dadar", "borivali", "mumbaikar"
+        ],
+        "Bangalore": [
+            "bangalore", "bengaluru", "indiranagar", "koramangala", "whitefield",
+            "hsr layout", "electronic city", "jayanagar", "jp nagar", "malleshwaram"
+        ],
+        "Hyderabad": [
+            "hyderabad", "secunderabad", "cyberabad", "jubilee hills", "banjara hills",
+            "gachibowli", "hitec city", "madhapur", "kondapur", "hyderabadi"
+        ],
+        "Chennai": [
+            "chennai", "madras", "adyar", "t nagar", "anna nagar", "besant nagar", "mylapore"
+        ],
+        "Kolkata": [
+            "kolkata", "calcutta", "salt lake", "new town", "park street", "ballygunge"
+        ],
+        "Pune": [
+            "pune", "punekar", "koregaon park", "kothrud", "viman nagar", "baner", "aundh", "wakad"
+        ],
+        "Ahmedabad": [
+            "ahmedabad", "gujarat", "gandhinagar", "sg highway", "satellite", "bodakdev"
+        ],
+        "Jaipur": [
+            "jaipur", "pink city", "rajasthan", "c scheme", "vaishali nagar", "mansarovar"
+        ],
+        "Chandigarh": [
+            "chandigarh", "mohali", "panchkula", "tricity"
+        ],
+        "Lucknow": [
+            "lucknow", "gomti nagar", "hazratganj", "aliganj"
+        ],
+        "Goa": [
+            "goa", "panjim", "north goa", "south goa", "anjuna", "vagator", "calangute"
+        ]
     }
     
     COLLAB_SIGNALS = [
         "collab", "collabs", "collaboration", "collaborations", "dm for collab",
         "dm for collabs", "dm for collaborations", "pr", "inquiries", "management",
-        "bookings", "brand ambassador", "press", "ugc"
+        "bookings", "brand ambassador", "press", "ugc", "work with me", "partnerships"
     ]
 
     @classmethod
@@ -162,6 +191,11 @@ class TaggingEngine:
         """
         Detects region STRICTLY from bio text and public content snippets.
         CRITICAL: Username and Title are explicitly excluded to prevent handle bias.
+        
+        Returns:
+          - region_name: Optional[str] (e.g. 'Delhi', 'Mumbai', 'Bangalore')
+          - confidence: str ('HIGH', 'MEDIUM', 'LOW')
+          - evidence: str (The exact snippet/phrase that provided evidence)
         """
         eval_text = f"{bio_text or ''} {context_snippet or ''}".lower()
         if not eval_text.strip():

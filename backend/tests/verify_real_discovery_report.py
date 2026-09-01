@@ -9,7 +9,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 from app.models.search import SearchRequest
 from app.discovery.search_provider import SearchDiscoveryProvider
 
-async def run_forensic_real_benchmarks():
+async def run_live_discovery_benchmarks():
     provider = SearchDiscoveryProvider()
 
     test_scenarios = [
@@ -28,19 +28,32 @@ async def run_forensic_real_benchmarks():
         },
         {
             "id": "BENCHMARK 2",
-            "name": "Delhi + Travel (1K–10K)",
+            "name": "Delhi + Fashion (10K–100K)",
             "req": SearchRequest(
                 region="Delhi",
-                niche="Travel",
-                followers_min=1000,
-                followers_max=10000,
-                keywords=["traveler", "vlog"],
+                niche="Fashion",
+                followers_min=10000,
+                followers_max=100000,
+                keywords=["stylist", "ootd"],
                 provider="search",
                 max_results=100
             )
         },
         {
             "id": "BENCHMARK 3",
+            "name": "Mumbai + Travel (1K–10K)",
+            "req": SearchRequest(
+                region="Mumbai",
+                niche="Travel",
+                followers_min=1000,
+                followers_max=10000,
+                keywords=["traveler", "backpacker"],
+                provider="search",
+                max_results=100
+            )
+        },
+        {
+            "id": "BENCHMARK 4",
             "name": "Mumbai + Beauty (10K–100K)",
             "req": SearchRequest(
                 region="Mumbai",
@@ -53,7 +66,7 @@ async def run_forensic_real_benchmarks():
             )
         },
         {
-            "id": "BENCHMARK 4",
+            "id": "BENCHMARK 5",
             "name": "Bangalore + Technology (10K–500K)",
             "req": SearchRequest(
                 region="Bangalore",
@@ -64,11 +77,24 @@ async def run_forensic_real_benchmarks():
                 provider="search",
                 max_results=100
             )
+        },
+        {
+            "id": "BENCHMARK 6",
+            "name": "Delhi + Lifestyle (1K–50K)",
+            "req": SearchRequest(
+                region="Delhi",
+                niche="Lifestyle",
+                followers_min=1000,
+                followers_max=50000,
+                keywords=["vlog", "creator"],
+                provider="search",
+                max_results=100
+            )
         }
     ]
 
     print("==========================================================================================", flush=True)
-    print("INSCOUT DISCOVERY ENGINE REBUILD — FORENSIC REAL DISCOVERY BENCHMARK REPORT", flush=True)
+    print("INSCOUT LIVE DISCOVERY ENGINE — 6-SCENARIO FORENSIC BENCHMARK REPORT", flush=True)
     print("==========================================================================================", flush=True)
 
     summary_rows = []
@@ -83,6 +109,7 @@ async def run_forensic_real_benchmarks():
         profiles = data["profiles"]
         c_disc = data["candidates_discovered"]
         u_cand = data["unique_candidates"]
+        duplicates = max(0, c_disc - u_cand)
         p_ver = data["profiles_verified"]
         p_rej = data["profiles_rejected"]
         rej_breakdown = data["rejection_breakdown"]
@@ -107,8 +134,12 @@ async def run_forensic_real_benchmarks():
             "q_exec": q_exec,
             "c_disc": c_disc,
             "u_cand": u_cand,
+            "duplicates": duplicates,
             "p_ver": p_ver,
-            "p_rej": p_rej,
+            "f_rej": rej_breakdown.get("follower_out_of_range", 0) + rej_breakdown.get("follower_unknown", 0),
+            "reg_rej": rej_breakdown.get("region_mismatch_or_unverified", 0),
+            "niche_rej": rej_breakdown.get("niche_mismatch", 0),
+            "p_mat": p_mat,
             "p_ret": p_ret,
             "bias_pct": bias_pct,
             "evidence_pct": evidence_pct,
@@ -118,17 +149,16 @@ async def run_forensic_real_benchmarks():
 
         print(f"\n------------------------------------------------------------------------------------------", flush=True)
         print(f"[{test['id']}] {test['name']}", flush=True)
-        print(f"  * Search Criteria: Region='{req.region}', Niche='{req.niche}', Followers={req.followers_min:,}–{req.followers_max:,}", flush=True)
+        print(f"  * Criteria: Region='{req.region}', Niche='{req.niche}', Followers={req.followers_min:,}–{req.followers_max:,}", flush=True)
         print(f"  * Queries Generated: {q_gen} | Queries Executed: {q_exec}", flush=True)
-        print(f"  * Raw Candidates Discovered: {c_disc} | Unique Candidates: {u_cand}", flush=True)
-        print(f"  * Profiles Verified: {p_ver} | Profiles Rejected: {p_rej}", flush=True)
-        print(f"  * Rejection Reasons Breakdown: {rej_breakdown}", flush=True)
-        print(f"  * Final Matching Profiles: {p_mat} | Returned: {p_ret} (Time: {elapsed_sec}s)", flush=True)
-        print(f"  * CRITICAL METRIC: Region in Username Bias: {bias_pct}% (Lower = less biased)", flush=True)
-        print(f"  * CRITICAL METRIC: Verified Bio/Location Evidence: {evidence_pct}% (Target = 100%)", flush=True)
+        print(f"  * Candidates: Discovered={c_disc} | Unique={u_cand} | Duplicates Removed={duplicates}", flush=True)
+        print(f"  * Profiles Verified: {p_ver} | Total Rejected: {p_rej}", flush=True)
+        print(f"  * Rejection Breakdown: Follower Range/Unknown={row['f_rej']}, Region Mismatch={row['reg_rej']}, Niche Mismatch={row['niche_rej']}", flush=True)
+        print(f"  * Final Matches: {p_mat} | Displayed: {p_ret} (Time: {elapsed_sec}s)", flush=True)
+        print(f"  * Quality Metrics: Region in Username Bias={bias_pct}% | Verified Bio Evidence={evidence_pct}%", flush=True)
         
-        print(f"\n  Inspected Sample Profiles (First {min(6, len(profiles))}):", flush=True)
-        for idx, p in enumerate(profiles[:6], 1):
+        print(f"\n  Top Discovered Real Profiles (First {min(5, len(profiles))}):", flush=True)
+        for idx, p in enumerate(profiles[:5], 1):
             f_str = f"{p.followers:,}" if p.followers else "Unknown"
             print(f"    {idx:2d}. @{p.username:<26} | Followers: {f_str:<10} | Region: {p.region or 'N/A':<10} | Score: {p.match_score}/100", flush=True)
             print(f"        URL: {p.profile_url}", flush=True)
@@ -136,7 +166,7 @@ async def run_forensic_real_benchmarks():
             print(f"        Bio: {p.bio}", flush=True)
 
     print("\n==========================================================================================", flush=True)
-    print("FORENSIC BENCHMARK SUMMARY TABLE", flush=True)
+    print("FORENSIC BENCHMARK SUMMARY TABLE (6 SCENARIOS)", flush=True)
     print("==========================================================================================", flush=True)
     print(f"{'Benchmark':<13} | {'Criteria':<32} | {'Queries':<7} | {'Raw':<5} | {'Unique':<6} | {'Returned':<8} | {'Handle Bias %':<13} | {'Bio Evidence %':<14} | {'Time':<6}", flush=True)
     print("-" * 115, flush=True)
@@ -144,4 +174,4 @@ async def run_forensic_real_benchmarks():
         print(f"{r['id']:<13} | {r['name']:<32} | {r['q_gen']:<7} | {r['c_disc']:<5} | {r['u_cand']:<6} | {r['p_ret']:<8} | {r['bias_pct']:<13}% | {r['evidence_pct']:<14}% | {r['duration']:<6}s", flush=True)
 
 if __name__ == "__main__":
-    asyncio.run(run_forensic_real_benchmarks())
+    asyncio.run(run_live_discovery_benchmarks())

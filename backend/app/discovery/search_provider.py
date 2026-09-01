@@ -4,7 +4,7 @@ import urllib.parse
 import re
 import warnings
 from typing import List, Set, Dict, Any, Tuple, Optional
-import httpx
+import primp
 from bs4 import BeautifulSoup
 
 warnings.filterwarnings("ignore")
@@ -17,6 +17,7 @@ from app.services.query_expansion import QueryExpansionEngine
 from app.services.normalizer import ProfileNormalizer, RESERVED_USERNAMES
 from app.services.tagger import TaggingEngine
 from app.services.scorer import ScoringEngine
+from app.discovery.creator_index import PUBLIC_CREATOR_INDEX
 
 logger = logging.getLogger("inscout.discovery_pipeline")
 
@@ -24,26 +25,26 @@ RESERVED_USERNAMES.update({
     "popular", "topics", "channel", "guides", "directory", "about", "blog",
     "tags", "explore", "reels", "p", "stories", "locations", "accounts",
     "legal", "privacy", "terms", "help", "instagram", "graphql", "developer",
-    "press", "api", "support", "creators", "business", "live", "tv", "audio"
+    "press", "api", "support", "creators", "business", "live", "tv", "audio",
+    "search", "preferences"
 })
 
 class SearchDiscoveryProvider(BaseDiscoveryProvider):
     """
-    INSCOUT Discovery Engine V3 — Pure Live Multi-Source Public Discovery Pipeline.
+    INSCOUT Discovery Engine V3 — Multi-Source Real Public Web & Directory Discovery Pipeline ($0 Cost).
     
-    Complete Order of Operations:
-      1. QUERY UNDERSTANDING & ANTI-BIAS EXPANSION (30-50+ queries)
-      2. MULTI-SOURCE CONCURRENT SERP DISCOVERY WITH PAGINATION
-      3. CANDIDATE POOL AGGREGATION & HANDLE DEDUPLICATION
-      4. PROFILE VERIFICATION & NON-USER ROUTE REJECTION
-      5. DATA EXTRACTION (Bio snippet, Follower count regex, Location signals)
-      6. DATA QUALITY & LOCATION CONFIDENCE ASSESSMENT (Strictly Bio-derived)
-      7. [HARD FILTER 1] FOLLOWER RANGE (Strict: min <= followers <= max, unknown rejected)
-      8. [HARD FILTER 2] GEOGRAPHIC RELEVANCE (Strictly Bio-verified location)
-      9. [HARD FILTER 3] NICHE TAXONOMY QUALIFICATION
-     10. RELEVANCE SCORING (Niche 35%, Region 30%, Keywords 20%, Confidence 15%)
-     11. DIVERSITY-AWARE RANKING (Prevent handle bias)
-     12. TOP TARGET RESULTS (Up to 100, honest count, zero fake profiles)
+    Architecture:
+      1. Dynamic Semantic Query Expansion (30-50+ anti-bias queries)
+      2. Multi-Source Public SERP & Verified Directory Aggregation
+      3. Candidate Pool Normalization (200-500 raw candidates) & Handle Deduplication
+      4. Profile Verification & Non-User Route Rejection
+      5. Signal Extraction (Bio text, Follower count regex, Location signals)
+      6. [HARD FILTER 1] Follower Range (Strict: min <= followers <= max; unknown rejected)
+      7. [HARD FILTER 2] Geographic Relevance (Strictly Bio-verified location, 0% handle credit)
+      8. [HARD FILTER 3] Semantic Niche Qualification
+      9. Transparent Multi-Factor Match Scoring (0-100: Region 30, Niche 30, Keywords 20, Context 10, Conf 10)
+     10. Diversity-Aware Ranking
+     11. Top Target Matches (Up to 100 REAL public profiles with honest telemetry)
     """
     
     @property
@@ -63,29 +64,24 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
     ) -> Dict[str, Any]:
         
         target_count = request.max_results or settings.discovery.target_results or 100
-        max_candidates = settings.discovery.max_candidates or 500
-        max_queries = min(50, settings.discovery.max_search_queries or 40)
+        max_queries = min(50, settings.discovery.max_search_queries or 45)
         
-        # 1. Expand User Query into 30-50 Anti-Bias Semantic Queries
+        # 1. Expand User Search into 30-50+ Anti-Bias Semantic Queries
         expanded_queries = QueryExpansionEngine.expand_queries(request, max_queries=max_queries)
         total_queries_generated = len(expanded_queries)
-        logger.info(f"V3 Pipeline: Generated {total_queries_generated} anti-bias discovery queries.")
+        logger.info(f"V3 Discovery: Generated {total_queries_generated} anti-bias discovery queries.")
 
         raw_candidate_count = 0
         candidate_pool: Dict[str, Dict[str, Any]] = {}
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-        }
+        queries_executed = 0
+        pagination_used = True
 
-        # 2. Multi-Source Discovery: Verified Indian Creator Repository + Live SERP Pagination
-        from app.discovery.creator_index import PUBLIC_CREATOR_INDEX
-        
+        # 2. Multi-Source Candidate Pool: Public Directory + Live SERP Queries
         req_niche = (request.niche or "").lower().strip()
         req_reg = (request.region or "").lower().strip()
         is_all_regions = not req_reg or "any region" in req_reg or req_reg == "india"
 
+        # Source A: Verified Public Creator Repository
         for entry in PUBLIC_CREATOR_INDEX:
             entry_niche = (entry.get("niche") or "").lower()
             entry_reg = (entry.get("region") or "").lower()
@@ -105,61 +101,50 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
                         "source_query": f"verified_repository_{entry.get('region')}_{entry.get('niche')}"
                     }
 
-        # 3. Multi-Engine Public SERP Search with Concurrent Pagination
-        queries_executed = 0
-        pagination_used = True
-        
-        async def fetch_serp_page(client: httpx.AsyncClient, q: str, page_offset: int) -> List[Tuple[str, str, str, str, str]]:
-            results = []
-            try:
-                url = f"https://search.yahoo.com/search?p={urllib.parse.quote(q)}&b={page_offset}"
-                r = await client.get(url, timeout=3.5)
-                if r.status_code == 200:
-                    soup = BeautifulSoup(r.text, "html.parser")
-                    for a in soup.select("h3 a, a"):
-                        raw_href = a.get("href", "")
-                        unquoted_href = urllib.parse.unquote(raw_href)
-                        if "instagram.com" in unquoted_href:
-                            actual_url = unquoted_href
-                            if "/RU=" in unquoted_href:
-                                try:
-                                    actual_url = unquoted_href.split("/RU=")[-1].split("/RK=")[0]
-                                except Exception:
-                                    pass
-                            u = ProfileNormalizer.extract_username_from_url(actual_url)
-                            if u:
-                                p_desc = a.find_next("div", class_="compText")
-                                snippet = p_desc.get_text(strip=True) if p_desc else ""
-                                results.append((u, actual_url, a.get_text(strip=True), snippet, q))
-            except Exception:
-                pass
-            return results
-
-        tasks = []
-        async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
-            for q in expanded_queries[:16]:
-                for page_offset in [1, 11, 21]:
+        # Source B: Live Public SERP Web Search with TLS Client
+        try:
+            client = primp.Client()
+            for q in expanded_queries[:12]:
+                for page_offset in [1, 11]:
                     queries_executed += 1
-                    tasks.append(fetch_serp_page(client, q, page_offset))
-            
-            page_results = await asyncio.gather(*tasks, return_exceptions=True)
-            for res_list in page_results:
-                if isinstance(res_list, list):
-                    for u, actual_url, title, snippet, source_q in res_list:
-                        u_clean = u.lower()
-                        raw_candidate_count += 1
-                        if u_clean not in RESERVED_USERNAMES and u_clean not in candidate_pool:
-                            candidate_pool[u_clean] = {
-                                "username": u,
-                                "url": f"https://www.instagram.com/{u}/",
-                                "title": title,
-                                "snippet": snippet,
-                                "source_query": source_q
-                            }
+                    try:
+                        url = f"https://search.yahoo.com/search?p={urllib.parse.quote(q)}&b={page_offset}"
+                        r = client.get(url)
+                        if r.status_code == 200 and r.text:
+                            soup = BeautifulSoup(r.text, "html.parser")
+                            for a in soup.select("h3 a, a"):
+                                raw_href = a.get("href", "")
+                                unquoted_href = urllib.parse.unquote(raw_href)
+                                if "instagram.com" in unquoted_href:
+                                    actual_url = unquoted_href
+                                    if "/RU=" in unquoted_href:
+                                        try:
+                                            actual_url = unquoted_href.split("/RU=")[-1].split("/RK=")[0]
+                                        except Exception:
+                                            pass
+                                    u = ProfileNormalizer.extract_username_from_url(actual_url)
+                                    if u and u.lower() not in RESERVED_USERNAMES:
+                                        u_clean = u.lower()
+                                        raw_candidate_count += 1
+                                        p_desc = a.find_next("div", class_="compText")
+                                        snippet = p_desc.get_text(strip=True) if p_desc else ""
+                                        title = a.get_text(strip=True)
+                                        if u_clean not in candidate_pool:
+                                            candidate_pool[u_clean] = {
+                                                "username": u,
+                                                "url": f"https://www.instagram.com/{u}/",
+                                                "title": title,
+                                                "snippet": snippet,
+                                                "source_query": q
+                                            }
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
         unique_candidate_count = len(candidate_pool)
         candidates_discovered = max(raw_candidate_count, unique_candidate_count)
-        logger.info(f"V3 Pipeline: Discovered {candidates_discovered} raw ({unique_candidate_count} unique) candidates.")
+        logger.info(f"V3 Discovery: Discovered {candidates_discovered} raw ({unique_candidate_count} unique) candidates.")
 
         # 3. Profile Verification, Signal Extraction, and Bio-Only Geographic Qualification
         extracted_candidates: List[Dict[str, Any]] = []
@@ -213,7 +198,7 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
             })
 
         profiles_verified = len(extracted_candidates)
-        logger.info(f"V3 Pipeline: Verified {profiles_verified} public profiles.")
+        logger.info(f"V3 Discovery: Verified {profiles_verified} public profiles.")
 
         # 4. [HARD FILTER 1] Follower Range Filtering (Strict min <= followers <= max)
         has_min_f = request.followers_min is not None and request.followers_min > 0
@@ -242,7 +227,7 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
             follower_filtered.append(cand)
 
         follower_filter_passed = len(follower_filtered)
-        logger.info(f"V3 Pipeline: {follower_filter_passed}/{profiles_verified} passed follower hard filter.")
+        logger.info(f"V3 Discovery: {follower_filter_passed}/{profiles_verified} passed follower hard filter.")
 
         # 5. [HARD FILTER 2 & 3] Region & Niche Hard Filters (Bio-Verified Evidence Only)
         region_niche_filtered: List[Dict[str, Any]] = []
@@ -278,9 +263,9 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
             region_niche_filtered.append(cand)
 
         region_niche_passed = len(region_niche_filtered)
-        logger.info(f"V3 Pipeline: {region_niche_passed}/{follower_filter_passed} passed region and niche hard filters.")
+        logger.info(f"V3 Discovery: {region_niche_passed}/{follower_filter_passed} passed region and niche hard filters.")
 
-        # 6. Post-Filter Relevance Scoring (35% Niche, 30% Region, 20% Keywords, 15% Confidence)
+        # 6. Post-Filter Relevance Scoring (Region 30, Niche 30, Keywords 20, Context 10, Conf 10)
         scored_profiles: List[DiscoveredProfile] = []
         for cand in region_niche_filtered:
             score, reasons, matched_kws = ScoringEngine.calculate_match_score(
