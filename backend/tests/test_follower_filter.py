@@ -45,17 +45,8 @@ async def test_live_search_follower_filter_excludes_komal_pandey():
         provider="search"
     )
     
-    (
-        profiles,
-        cand_count,
-        u_count,
-        ver_count,
-        f_pass,
-        rn_pass,
-        q_gen,
-        q_exec,
-        pag_used
-    ) = await provider.discover_profiles_with_metrics(req)
+    res = await provider.discover_profiles_with_metrics(req)
+    profiles = res["profiles"]
     
     usernames = [p.username.lower() for p in profiles]
     assert "komalpandeyofficial" not in usernames, "@komalpandeyofficial (1.9M) must be excluded from 1K-10K search!"
@@ -64,4 +55,3 @@ async def test_live_search_follower_filter_excludes_komal_pandey():
     for p in profiles:
         assert p.followers is not None, f"Profile {p.username} has unknown followers but passed range filter"
         assert 1000 <= p.followers <= 10000, f"Profile {p.username} ({p.followers}) is outside 1K-10K range!"
-

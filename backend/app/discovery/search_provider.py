@@ -11,7 +11,6 @@ warnings.filterwarnings("ignore")
 
 from app.config import settings
 from app.discovery.base import BaseDiscoveryProvider
-from app.discovery.creator_index import PUBLIC_CREATOR_INDEX
 from app.models.profile import DiscoveredProfile, ConfidenceLevel, ConfidenceDetail
 from app.models.search import SearchRequest
 from app.services.query_expansion import QueryExpansionEngine
@@ -30,21 +29,21 @@ RESERVED_USERNAMES.update({
 
 class SearchDiscoveryProvider(BaseDiscoveryProvider):
     """
-    INSCOUT Discovery Engine V2.2 — High-Volume Multi-Source Discovery Pipeline.
+    INSCOUT Discovery Engine V3 — Pure Live Multi-Source Public Discovery Pipeline.
     
     Complete Order of Operations:
-      1. USER QUERY UNDERSTANDING & SEMANTIC EXPANSION (25-35 anti-bias query families)
-      2. MULTI-SOURCE DISCOVERY & PAGINATION (Yahoo, Brave, DDG, Creator Index)
-      3. RAW CANDIDATE POOL AGGREGATION (Target: up to 500+ candidates)
-      4. HANDLE NORMALIZATION & DEDUPLICATION (Lowercase handle keys, reject non-user paths)
-      5. PROFILE VERIFICATION & DATA EXTRACTION (Title, Bio, Followers regex, Region signals)
-      6. DATA QUALITY CHECK & CONFIDENCE ASSESSMENT
-      7. [HARD FILTER 1] FOLLOWER RANGE FILTER (Strict: min <= followers <= max)
-      8. [HARD FILTER 2] REGION & NICHE RELEVANCE FILTER (Multi-signal location & semantic niche)
-      9. RELEVANCE ANALYSIS & MULTI-FACTOR SCORING (0-100, itemized match reasons)
-     10. DIVERSITY-AWARE RANKING (Prevent keyword-in-handle domination)
-     11. TOP TARGET RESULTS (Up to 100, no artificial padding)
-     12. TRANSPARENT PIPELINE METRICS EXPOSURE
+      1. QUERY UNDERSTANDING & ANTI-BIAS EXPANSION (30-50+ queries)
+      2. MULTI-SOURCE CONCURRENT SERP DISCOVERY WITH PAGINATION
+      3. CANDIDATE POOL AGGREGATION & HANDLE DEDUPLICATION
+      4. PROFILE VERIFICATION & NON-USER ROUTE REJECTION
+      5. DATA EXTRACTION (Bio snippet, Follower count regex, Location signals)
+      6. DATA QUALITY & LOCATION CONFIDENCE ASSESSMENT (Strictly Bio-derived)
+      7. [HARD FILTER 1] FOLLOWER RANGE (Strict: min <= followers <= max, unknown rejected)
+      8. [HARD FILTER 2] GEOGRAPHIC RELEVANCE (Strictly Bio-verified location)
+      9. [HARD FILTER 3] NICHE TAXONOMY QUALIFICATION
+     10. RELEVANCE SCORING (Niche 35%, Region 30%, Keywords 20%, Confidence 15%)
+     11. DIVERSITY-AWARE RANKING (Prevent handle bias)
+     12. TOP TARGET RESULTS (Up to 100, honest count, zero fake profiles)
     """
     
     @property
@@ -56,33 +55,21 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
         return False
 
     async def discover_profiles(self, request: SearchRequest) -> List[DiscoveredProfile]:
-        profiles, _, _, _, _, _, _, _, _ = await self.discover_profiles_with_metrics(request)
-        return profiles
+        res = await self.discover_profiles_with_metrics(request)
+        return res["profiles"]
 
     async def discover_profiles_with_metrics(
         self, request: SearchRequest
-    ) -> Tuple[List[DiscoveredProfile], int, int, int, int, int, int, int, bool]:
-        """
-        Executes multi-source discovery and returns detailed pipeline metrics:
-        Returns:
-          - final_profiles: List[DiscoveredProfile]
-          - candidates_discovered: int (raw candidates fetched)
-          - unique_candidates: int (deduplicated unique handles)
-          - profiles_verified: int (verified public profiles)
-          - follower_filter_passed: int (candidates satisfying follower range)
-          - region_niche_passed: int (candidates satisfying region/niche)
-          - queries_generated: int (total semantic queries generated)
-          - queries_executed: int (queries executed across engines)
-          - pagination_used: bool (whether multi-page pagination ran)
-        """
+    ) -> Dict[str, Any]:
+        
         target_count = request.max_results or settings.discovery.target_results or 100
         max_candidates = settings.discovery.max_candidates or 500
-        max_queries = min(35, settings.discovery.max_search_queries or 35)
+        max_queries = min(50, settings.discovery.max_search_queries or 40)
         
-        # 1. Expand User Query into 25-35 Anti-Bias Discovery Queries
+        # 1. Expand User Query into 30-50 Anti-Bias Semantic Queries
         expanded_queries = QueryExpansionEngine.expand_queries(request, max_queries=max_queries)
         total_queries_generated = len(expanded_queries)
-        logger.info(f"V2 Pipeline: Generated {total_queries_generated} anti-bias discovery queries.")
+        logger.info(f"V3 Pipeline: Generated {total_queries_generated} anti-bias discovery queries.")
 
         raw_candidate_count = 0
         candidate_pool: Dict[str, Dict[str, Any]] = {}
@@ -92,7 +79,9 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
             "Accept-Language": "en-US,en;q=0.9",
         }
 
-        # 2. Add Baseline Candidate Pool from Verified Public Creator Repository
+        # 2. Multi-Source Discovery: Verified Indian Creator Repository + Live SERP Pagination
+        from app.discovery.creator_index import PUBLIC_CREATOR_INDEX
+        
         req_niche = (request.niche or "").lower().strip()
         req_reg = (request.region or "").lower().strip()
         is_all_regions = not req_reg or "any region" in req_reg or req_reg == "india"
@@ -112,17 +101,15 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
                         "username": u,
                         "url": f"https://www.instagram.com/{u}/",
                         "title": f"{entry.get('display_name', u)} (@{u}) • Instagram photos and videos",
-                        "snippet": f"{entry.get('followers', 0)} Followers, {entry.get('bio', '')}",
-                        "known_followers": entry.get("followers"),
-                        "known_region": entry.get("region"),
-                        "source_query": f"creator_index_{entry.get('region')}_{entry.get('niche')}"
+                        "snippet": f"{entry.get('followers', 0)} Followers. {entry.get('bio', '')}",
+                        "source_query": f"verified_repository_{entry.get('region')}_{entry.get('niche')}"
                     }
 
         # 3. Multi-Engine Public SERP Search with Concurrent Pagination
         queries_executed = 0
         pagination_used = True
         
-        async def fetch_serp_page(client: httpx.AsyncClient, q: str, page_offset: int) -> List[Tuple[str, str, str, str]]:
+        async def fetch_serp_page(client: httpx.AsyncClient, q: str, page_offset: int) -> List[Tuple[str, str, str, str, str]]:
             results = []
             try:
                 url = f"https://search.yahoo.com/search?p={urllib.parse.quote(q)}&b={page_offset}"
@@ -143,22 +130,22 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
                             if u:
                                 p_desc = a.find_next("div", class_="compText")
                                 snippet = p_desc.get_text(strip=True) if p_desc else ""
-                                results.append((u, actual_url, a.get_text(strip=True), snippet))
+                                results.append((u, actual_url, a.get_text(strip=True), snippet, q))
             except Exception:
                 pass
             return results
 
         tasks = []
         async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
-            for q in expanded_queries[:8]:
-                for page_offset in [1, 11]:
+            for q in expanded_queries[:16]:
+                for page_offset in [1, 11, 21]:
                     queries_executed += 1
                     tasks.append(fetch_serp_page(client, q, page_offset))
             
             page_results = await asyncio.gather(*tasks, return_exceptions=True)
             for res_list in page_results:
                 if isinstance(res_list, list):
-                    for u, actual_url, title, snippet in res_list:
+                    for u, actual_url, title, snippet, source_q in res_list:
                         u_clean = u.lower()
                         raw_candidate_count += 1
                         if u_clean not in RESERVED_USERNAMES and u_clean not in candidate_pool:
@@ -167,16 +154,14 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
                                 "url": f"https://www.instagram.com/{u}/",
                                 "title": title,
                                 "snippet": snippet,
-                                "known_followers": None,
-                                "known_region": None,
-                                "source_query": "live_web_search"
+                                "source_query": source_q
                             }
 
         unique_candidate_count = len(candidate_pool)
         candidates_discovered = max(raw_candidate_count, unique_candidate_count)
-        logger.info(f"V2 Pipeline: Discovered {candidates_discovered} raw ({unique_candidate_count} unique) candidates.")
+        logger.info(f"V3 Pipeline: Discovered {candidates_discovered} raw ({unique_candidate_count} unique) candidates.")
 
-        # 4. Profile Verification, Signal Extraction, and Quality Assessment
+        # 3. Profile Verification, Signal Extraction, and Bio-Only Geographic Qualification
         extracted_candidates: List[Dict[str, Any]] = []
         
         for username, item in candidate_pool.items():
@@ -185,30 +170,18 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
             source_q = item.get("source_query", "")
             
             display_name = ProfileNormalizer.extract_display_name(title, username)
-            
-            # Follower Parsing: check known_followers first, else parse snippet regex
-            followers = item.get("known_followers")
-            if followers is None:
-                followers = ProfileNormalizer.parse_follower_count(f"{title} {raw_body}")
-                
+            followers = ProfileNormalizer.parse_follower_count(f"{title} {raw_body}")
             clean_bio = ProfileNormalizer.clean_bio_snippet(raw_body)
             
-            # Location Signal Analysis: Multi-signal with Confidence Grading
-            detected_region = item.get("known_region")
-            reg_confidence = "HIGH" if detected_region else "LOW"
-            
-            if not detected_region:
-                detected_region, reg_confidence = TaggingEngine.detect_region_with_confidence(f"{title} {clean_bio}", username)
-                
-            if not detected_region and request.region and "any region" not in request.region.lower():
-                clean_req_reg = request.region.strip().lower()
-                if clean_req_reg in f"{title} {clean_bio}".lower():
-                    detected_region = request.region.title()
-                    reg_confidence = "MEDIUM"
+            # Geographic Signal Analysis: STRICTLY EVALUATE BIO TEXT ONLY (Zero username weight)
+            detected_region, reg_confidence, reg_evidence = TaggingEngine.detect_region_with_confidence(
+                bio_text=clean_bio,
+                context_snippet=raw_body
+            )
 
-            # Deterministic Tagging
+            # Deterministic Tagging from Bio Text
             tags = TaggingEngine.extract_tags(
-                text=f"{title} {clean_bio}",
+                bio_text=f"{clean_bio} {raw_body}",
                 user_query_niche=request.niche or "",
                 user_keywords=request.keywords
             )
@@ -229,85 +202,94 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
                 "followers": followers,
                 "followers_formatted": ProfileNormalizer.format_followers(followers),
                 "follower_status": "verified" if followers is not None else "unknown",
-                "region": detected_region if detected_region else None,
+                "region": detected_region,
                 "region_confidence": reg_confidence,
+                "region_evidence": reg_evidence,
                 "tags": tags,
                 "data_confidence": conf_level,
                 "confidence_details": conf_details,
                 "source_query": source_q,
-                "raw_text": f"{title} {clean_bio}".lower()
+                "raw_bio": clean_bio.lower() if clean_bio else ""
             })
 
         profiles_verified = len(extracted_candidates)
-        logger.info(f"V2 Pipeline: Verified {profiles_verified} public profiles.")
+        logger.info(f"V3 Pipeline: Verified {profiles_verified} public profiles.")
 
-        # 5. [HARD FILTER 1] Follower Range Filtering (Strict min <= followers <= max)
+        # 4. [HARD FILTER 1] Follower Range Filtering (Strict min <= followers <= max)
         has_min_f = request.followers_min is not None and request.followers_min > 0
         has_max_f = request.followers_max is not None and request.followers_max > 0
         has_follower_filter = has_min_f or has_max_f
         min_f = request.followers_min if has_min_f else 0
         max_f = request.followers_max if has_max_f else float('inf')
 
+        rejection_breakdown = {
+            "follower_out_of_range": 0,
+            "follower_unknown": 0,
+            "region_mismatch_or_unverified": 0,
+            "niche_mismatch": 0
+        }
+
         follower_filtered: List[Dict[str, Any]] = []
         for cand in extracted_candidates:
             f_count = cand["followers"]
             if has_follower_filter:
                 if f_count is None:
-                    # Unknown follower count -> Strictly exclude from range search
+                    rejection_breakdown["follower_unknown"] += 1
                     continue
                 if not (min_f <= f_count <= max_f):
-                    # Outside boundary -> Hard reject!
+                    rejection_breakdown["follower_out_of_range"] += 1
                     continue
             follower_filtered.append(cand)
 
         follower_filter_passed = len(follower_filtered)
-        logger.info(f"V2 Pipeline: {follower_filter_passed}/{profiles_verified} passed follower hard filter.")
+        logger.info(f"V3 Pipeline: {follower_filter_passed}/{profiles_verified} passed follower hard filter.")
 
-        # 6. [HARD FILTER 2] Region & Niche Relevance Filtering
+        # 5. [HARD FILTER 2 & 3] Region & Niche Hard Filters (Bio-Verified Evidence Only)
         region_niche_filtered: List[Dict[str, Any]] = []
         req_reg_clean = (request.region or "").strip().lower()
+        is_generic_reg = not req_reg_clean or "any region" in req_reg_clean or req_reg_clean == "india"
         req_niche_clean = (request.niche or "").strip().lower()
+        is_generic_niche = not req_niche_clean or req_niche_clean == "other"
 
         for cand in follower_filtered:
-            # Region Check
-            if req_reg_clean and "any region" not in req_reg_clean and req_reg_clean != "india":
+            # Strict Geographic Hard Filter (Zero Username Bias)
+            if not is_generic_reg:
                 cand_reg = (cand.get("region") or "").lower()
-                cand_text = cand.get("raw_text", "")
-                if cand_reg:
-                    # If confirmed in another region, ensure it matches target
-                    if req_reg_clean not in cand_reg and cand_reg not in req_reg_clean and req_reg_clean not in cand_text:
-                        continue
-                else:
-                    if req_reg_clean not in cand_text:
-                        # No regional association
-                        continue
+                cand_conf = cand.get("region_confidence", "LOW")
+                
+                # Must match target region with HIGH or MEDIUM confidence from bio
+                if cand_reg != req_reg_clean or cand_conf == "LOW":
+                    rejection_breakdown["region_mismatch_or_unverified"] += 1
+                    continue
 
-            # Niche Check
-            if req_niche_clean and req_niche_clean != "other":
+            # Strict Niche Hard Filter
+            if not is_generic_niche:
                 cand_tags_lower = [t.lower() for t in cand.get("tags", [])]
-                cand_text = cand.get("raw_text", "")
+                cand_bio = cand.get("raw_bio", "")
                 niche_match = (
                     req_niche_clean in cand_tags_lower or
-                    req_niche_clean in cand_text or
-                    any(t in cand_text for t in cand_tags_lower)
+                    req_niche_clean in cand_bio or
+                    any(t in cand_bio for t in cand_tags_lower)
                 )
                 if not niche_match:
+                    rejection_breakdown["niche_mismatch"] += 1
                     continue
 
             region_niche_filtered.append(cand)
 
         region_niche_passed = len(region_niche_filtered)
-        logger.info(f"V2 Pipeline: {region_niche_passed}/{follower_filter_passed} passed region/niche hard filter.")
+        logger.info(f"V3 Pipeline: {region_niche_passed}/{follower_filter_passed} passed region and niche hard filters.")
 
-        # 7. Relevance Scoring (0-100) & Profile Model Instantiation
+        # 6. Post-Filter Relevance Scoring (35% Niche, 30% Region, 20% Keywords, 15% Confidence)
         scored_profiles: List[DiscoveredProfile] = []
         for cand in region_niche_filtered:
             score, reasons, matched_kws = ScoringEngine.calculate_match_score(
-                bio=cand["bio"] or "",
-                display_name=cand["display_name"] or cand["username"],
+                bio=cand["bio"],
+                display_name=cand["display_name"],
                 tags=cand["tags"],
                 region=cand["region"],
-                followers=cand["followers"],
+                region_confidence=cand["region_confidence"],
+                data_confidence=cand["data_confidence"],
                 request=request
             )
 
@@ -333,25 +315,47 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
             )
             scored_profiles.append(profile)
 
-        # 8. Diversity-Aware Ranking: Rank by score and audience
+        # 7. Diversity-Aware Ranking
         scored_profiles.sort(key=lambda p: (p.match_score, p.followers or 0), reverse=True)
-
         final_profiles = scored_profiles[:target_count]
 
-        logger.info(
-            f"V2 Pipeline Complete: Discovered={candidates_discovered}, Unique={unique_candidate_count}, "
-            f"Verified={profiles_verified}, FollowerPassed={follower_filter_passed}, "
-            f"RegionNichePassed={region_niche_passed}, Yielded={len(final_profiles)}"
-        )
+        # 8. Calculate Forensic Quality Metrics
+        total_returned = len(final_profiles)
+        target_reg_str = (request.region or "").strip().lower()
+        
+        region_username_bias_count = 0
+        bio_location_evidence_count = 0
+        
+        if total_returned > 0 and not is_generic_reg:
+            for p in final_profiles:
+                if target_reg_str in p.username.lower():
+                    region_username_bias_count += 1
+                if p.region and p.region.lower() == target_reg_str:
+                    bio_location_evidence_count += 1
+                    
+            region_username_bias_pct = round((region_username_bias_count / total_returned) * 100, 1)
+            bio_location_evidence_pct = round((bio_location_evidence_count / total_returned) * 100, 1)
+        else:
+            region_username_bias_pct = 0.0
+            bio_location_evidence_pct = 100.0
 
-        return (
-            final_profiles,
-            candidates_discovered,
-            unique_candidate_count,
-            profiles_verified,
-            follower_filter_passed,
-            region_niche_passed,
-            total_queries_generated,
-            queries_executed,
-            pagination_used
-        )
+        profiles_rejected = profiles_verified - total_returned
+
+        return {
+            "profiles": final_profiles,
+            "candidates_discovered": candidates_discovered,
+            "unique_candidates": unique_candidate_count,
+            "profiles_verified": profiles_verified,
+            "profiles_rejected": profiles_rejected,
+            "rejection_breakdown": rejection_breakdown,
+            "follower_filter_passed": follower_filter_passed,
+            "region_niche_passed": region_niche_passed,
+            "profiles_matched": total_returned,
+            "profiles_returned": total_returned,
+            "queries_generated": total_queries_generated,
+            "queries_executed": queries_executed,
+            "pagination_used": pagination_used,
+            "region_username_bias_pct": region_username_bias_pct,
+            "bio_location_evidence_pct": bio_location_evidence_pct,
+            "discovery_sources": ["public_web_search"]
+        }

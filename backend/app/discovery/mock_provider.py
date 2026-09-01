@@ -326,7 +326,8 @@ class MockDiscoveryProvider(BaseDiscoveryProvider):
                 display_name=display_name,
                 tags=tags,
                 region=raw_region,
-                followers=followers,
+                region_confidence="HIGH" if raw_region else "LOW",
+                data_confidence=ConfidenceLevel.HIGH,
                 request=request
             )
             

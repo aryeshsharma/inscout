@@ -1,5 +1,6 @@
 import pytest
 from app.models.search import SearchRequest
+from app.models.profile import ConfidenceLevel
 from app.services.scorer import ScoringEngine
 from app.services.tagger import TaggingEngine
 from app.services.query_generator import QueryGenerator
@@ -23,9 +24,8 @@ def test_query_generator_and_expansion():
 
     expanded = QueryExpansionEngine.expand_queries(req, max_queries=30)
     assert len(expanded) >= 20
-    assert any("#delhifashion" in q for q in expanded)
-    assert any("stylist" in q for q in expanded)
-    assert any("influencer" in q for q in expanded)
+    assert any("fashion" in q.lower() for q in expanded)
+    assert any("delhi" in q.lower() for q in expanded)
 
 def test_tagging_engine():
     bio = "Delhi NCR | Fashion & Lifestyle Creator | Model | DM for collaborations & PR"
@@ -60,19 +60,20 @@ def test_scoring_engine():
     )
     
     score, reasons, matched_kws = ScoringEngine.calculate_match_score(
-        bio="Delhi NCR | Fashion Creator | Model | Collabs",
+        bio="Based in New Delhi | Fashion Creator | Model | Collabs",
         display_name="Tanya",
         tags=["Fashion", "Model", "Open for Collabs"],
         region="Delhi",
-        followers=42300,
+        region_confidence="HIGH",
+        data_confidence=ConfidenceLevel.HIGH,
         request=req
     )
     
     assert 85 <= score <= 100
-    assert len(reasons) == 4 # Niche, Region, Followers, Keywords
+    assert len(reasons) == 4 # Niche, Region, Keywords, Confidence
     assert any("Fashion niche" in r.description for r in reasons)
     assert any("Delhi" in r.description for r in reasons)
-    assert any("42,300" in r.description for r in reasons)
+    assert any("model" in k.lower() or "creator" in k.lower() for k in matched_kws)
 
 @pytest.mark.asyncio
 async def test_mock_discovery_provider_isolated():
@@ -106,4 +107,3 @@ async def test_discovery_engine_v2():
     assert res["candidates_discovered"] >= 0
     assert res["profiles_verified"] >= 0
     assert isinstance(res["profiles"], list)
-

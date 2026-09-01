@@ -4,27 +4,27 @@ from app.models.search import SearchRequest
 
 class QueryExpansionEngine:
     """
-    INSCOUT Semantic Query Expansion Engine (Anti-Username-Bias).
+    INSCOUT Multi-Query Discovery Expansion Engine.
     
-    Generates 25-35 diverse, high-yielding discovery queries designed to discover
-    genuine public creators through bio signals, contact markers, role synonyms,
-    and regional cluster expansions rather than keyword-heavy usernames.
+    Dynamically generates 30-50+ independent, diverse query families designed to
+    discover genuine public creators through bio signals, collaboration markers,
+    role specializations, and regional cluster dorks — completely bypassing username bias.
     """
 
     ROLE_SYNONYMS: Dict[str, List[str]] = {
         "Fashion": [
-            "fashion creator", "fashion influencer", "stylist", "fashion blogger", "model", "lookbook",
-            "streetwear creator", "wardrobe stylist", "fashion designer", "ootd creator",
-            "menswear stylist", "ethnic fashion", "sustainable fashion", "style curator"
+            "fashion creator", "fashion stylist", "fashion blogger", "fashion influencer", "fashion model",
+            "wardrobe stylist", "streetwear creator", "lookbook", "ootd creator", "menswear stylist",
+            "sustainable fashion", "ethnic wear stylist", "commercial model", "style curator"
         ],
         "Travel": [
-            "travel creator", "travel blogger", "travel vlogger", "travel photographer",
-            "travel filmmaker", "backpacker", "wanderer", "nomad", "travel stories",
-            "road trips", "trekker", "itinerary guide", "solo traveller"
+            "travel creator", "travel blogger", "travel vlogger", "travel filmmaker", "travel photographer",
+            "backpacker", "wanderer", "solo traveler", "trekker", "road trip creator",
+            "itinerary guide", "travel writer", "nomad"
         ],
         "Beauty": [
-            "makeup artist", "mua", "beauty creator", "skincare blogger", "bridal makeup",
-            "hair stylist", "aesthetician", "cosmetics review", "glam artist", "skincare expert"
+            "makeup artist", "mua", "beauty creator", "skincare blogger", "bridal makeup artist",
+            "hair stylist", "aesthetician", "cosmetics reviewer", "glam artist", "skincare expert"
         ],
         "Technology": [
             "software developer", "tech creator", "coding educator", "fullstack engineer",
@@ -45,24 +45,19 @@ class QueryExpansionEngine:
             "aesthetic creator", "daily vlog", "digital creator", "curator"
         ],
         "Gaming": [
-            "gaming creator", "streamer", "esports athlete", "twitch streamer",
-            "gameplay creator", "pc gamer"
+            "gaming creator", "streamer", "esports athlete", "twitch streamer", "gameplay creator"
         ],
         "Finance": [
-            "finance creator", "investor", "stock trader", "fintech founder",
-            "wealth coach", "personal finance", "money mentor"
+            "finance creator", "investor", "stock trader", "fintech founder", "personal finance coach"
         ],
         "Music": [
-            "musician", "singer", "music producer", "dj", "songwriter",
-            "vocalist", "composer", "sound artist"
+            "musician", "singer", "music producer", "dj", "songwriter", "vocalist"
         ],
         "Photography": [
-            "photographer", "cinematographer", "videographer", "portrait photographer",
-            "visual artist", "fashion photographer", "street photographer"
+            "photographer", "cinematographer", "videographer", "portrait photographer", "visual artist"
         ],
         "Art": [
-            "artist", "illustrator", "digital artist", "painter", "graphic designer",
-            "sketch artist", "calligrapher", "craft creator"
+            "artist", "illustrator", "digital artist", "painter", "graphic designer", "craft creator"
         ],
         "Education": [
             "educator", "teacher", "mentor", "trainer", "course creator", "study creator"
@@ -108,11 +103,12 @@ class QueryExpansionEngine:
         "contact",
         "UGC creator",
         "content creator",
-        "based in"
+        "based in",
+        "living in"
     ]
 
     @classmethod
-    def expand_queries(cls, request: SearchRequest, max_queries: int = 35) -> List[str]:
+    def expand_queries(cls, request: SearchRequest, max_queries: int = 40) -> List[str]:
         queries: List[str] = []
         seen: Set[str] = set()
 
@@ -126,7 +122,6 @@ class QueryExpansionEngine:
         user_kws = [re.sub(r'[^\w\s]', '', k.strip()) for k in request.keywords if k.strip()]
         roles = cls.ROLE_SYNONYMS.get(clean_niche, cls.ROLE_SYNONYMS["Other"])
 
-        # Resolve regional cluster aliases
         city_aliases = [primary_city] if primary_city else []
         city_lower = primary_city.lower()
         if city_lower in cls.REGIONAL_CLUSTERS:
@@ -138,52 +133,44 @@ class QueryExpansionEngine:
                 seen.add(q_clean)
                 queries.append(q_clean)
 
-        # 1. Family 1: Bio Signal & Collaboration Inquiries (Discovers real creators, not keyword usernames)
-        for sig in cls.BIO_SIGNALS[:5]:
+        # Family 1: Explicit Bio Location Phrases ("based in Delhi", "living in Delhi NCR")
+        for sig in ["based in", "living in", "from"]:
             if primary_city and clean_niche:
-                add_q(f'site:instagram.com "{primary_city}" "{clean_niche}" "{sig}"')
-                add_q(f'site:instagram.com "based in {primary_city}" {clean_niche}')
+                add_q(f'site:instagram.com "{sig} {primary_city}" "{clean_niche}"')
+                add_q(f'site:instagram.com "{sig} {primary_city}" {roles[0]}')
             elif primary_city:
-                add_q(f'site:instagram.com "{primary_city}" "{sig}"')
-            elif clean_niche:
-                add_q(f'site:instagram.com "{clean_niche}" "{sig}"')
+                add_q(f'site:instagram.com "{sig} {primary_city}" creator')
 
-        # 2. Family 2: Role Synonyms & Specialized Content Creators
-        for role in roles[:8]:
+        # Family 2: Role Synonyms & Specialized Content Creators
+        for role in roles[:10]:
             if primary_city:
-                add_q(f'site:instagram.com "{primary_city}" {role}')
+                add_q(f'site:instagram.com "{primary_city}" "{role}"')
             elif clean_niche:
-                add_q(f'site:instagram.com {role}')
+                add_q(f'site:instagram.com "{role}"')
 
-        # 3. Family 3: Regional Cluster Synonyms (e.g., Gurgaon, Noida for Delhi)
+        # Family 3: Collaboration & PR Dorks
+        for b_sig in cls.BIO_SIGNALS[:6]:
+            if primary_city and clean_niche:
+                add_q(f'site:instagram.com "{primary_city}" "{clean_niche}" "{b_sig}"')
+            elif primary_city:
+                add_q(f'site:instagram.com "{primary_city}" "{b_sig}"')
+
+        # Family 4: Regional Cluster Synonyms (e.g. Gurgaon, Noida for Delhi)
         if len(city_aliases) > 1 and clean_niche:
-            for alias in city_aliases[1:5]:
-                add_q(f'site:instagram.com "{alias}" {clean_niche} creator')
-                add_q(f'site:instagram.com "{alias}" {roles[0]}')
+            for alias in city_aliases[1:6]:
+                add_q(f'site:instagram.com "{alias}" "{clean_niche} creator"')
+                add_q(f'site:instagram.com "{alias}" "{roles[0]}"')
 
-        # 4. Family 4: User-Supplied Keywords combined with Region
+        # Family 5: User-Supplied Keywords Combined with Region and Niche
         for ukw in user_kws[:4]:
             if primary_city and clean_niche:
-                add_q(f'site:instagram.com "{primary_city}" {clean_niche} {ukw}')
+                add_q(f'site:instagram.com "{primary_city}" "{clean_niche}" "{ukw}"')
             elif primary_city:
-                add_q(f'site:instagram.com "{primary_city}" {ukw}')
-            elif clean_niche:
-                add_q(f'site:instagram.com {clean_niche} {ukw}')
+                add_q(f'site:instagram.com "{primary_city}" "{ukw}"')
 
-        # 5. Family 5: Natural URL Paths & Inverted Location Markers
-        for role in roles[:4]:
-            if primary_city:
-                add_q(f'instagram.com/ "{primary_city}" {role}')
-            elif clean_niche:
-                add_q(f'instagram.com/ {role}')
-
-        # 6. Family 6: Hashtag Communities
+        # Family 6: Inverted Structure and City, India markers
         if primary_city and clean_niche:
-            city_slug = primary_city.lower().replace(" ", "")
-            niche_slug = clean_niche.lower().replace(" ", "")
-            add_q(f'site:instagram.com "#{city_slug}{niche_slug}"')
-            add_q(f'site:instagram.com "#{city_slug}creators"')
-        elif clean_niche:
-            add_q(f'site:instagram.com "#{clean_niche.lower()}creator"')
+            add_q(f'site:instagram.com "{primary_city}, India" "{clean_niche}"')
+            add_q(f'site:instagram.com "#{primary_city.lower().replace(" ", "")}{clean_niche.lower().replace(" ", "")}"')
 
         return queries

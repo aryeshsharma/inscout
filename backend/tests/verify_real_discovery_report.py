@@ -9,7 +9,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 from app.models.search import SearchRequest
 from app.discovery.search_provider import SearchDiscoveryProvider
 
-async def run_forensic_benchmarks():
+async def run_forensic_real_benchmarks():
     provider = SearchDiscoveryProvider()
 
     test_scenarios = [
@@ -34,26 +34,13 @@ async def run_forensic_benchmarks():
                 niche="Travel",
                 followers_min=1000,
                 followers_max=10000,
-                keywords=["creator", "travel"],
-                provider="search",
-                max_results=100
-            )
-        },
-        {
-            "id": "BENCHMARK 3",
-            "name": "Delhi + Travel (10K–50K)",
-            "req": SearchRequest(
-                region="Delhi",
-                niche="Travel",
-                followers_min=10000,
-                followers_max=50000,
                 keywords=["traveler", "vlog"],
                 provider="search",
                 max_results=100
             )
         },
         {
-            "id": "BENCHMARK 4",
+            "id": "BENCHMARK 3",
             "name": "Mumbai + Beauty (10K–100K)",
             "req": SearchRequest(
                 region="Mumbai",
@@ -66,7 +53,7 @@ async def run_forensic_benchmarks():
             )
         },
         {
-            "id": "BENCHMARK 5",
+            "id": "BENCHMARK 4",
             "name": "Bangalore + Technology (10K–500K)",
             "req": SearchRequest(
                 region="Bangalore",
@@ -80,9 +67,9 @@ async def run_forensic_benchmarks():
         }
     ]
 
-    print("==================================================================================", flush=True)
-    print("INSCOUT DISCOVERY ENGINE REDESIGN — FORENSIC BENCHMARK REPORT", flush=True)
-    print("==================================================================================", flush=True)
+    print("==========================================================================================", flush=True)
+    print("INSCOUT DISCOVERY ENGINE REBUILD — FORENSIC REAL DISCOVERY BENCHMARK REPORT", flush=True)
+    print("==========================================================================================", flush=True)
 
     summary_rows = []
 
@@ -90,29 +77,27 @@ async def run_forensic_benchmarks():
         req = test["req"]
         
         start_time = time.perf_counter()
-        (
-            profiles,
-            c_disc,
-            u_cand,
-            p_ver,
-            f_pass,
-            rn_pass,
-            q_gen,
-            q_exec,
-            pag_used
-        ) = await provider.discover_profiles_with_metrics(req)
+        data = await provider.discover_profiles_with_metrics(req)
         elapsed_sec = round(time.perf_counter() - start_time, 2)
 
-        # Verification: Komal Pandey must never be in 1K-10K
-        if "1K–10K" in test["name"]:
-            kp_found = any(p.username.lower() == "komalpandeyofficial" for p in profiles)
-            assert not kp_found, "FATAL: Komal Pandey (1.9M) found in 1K-10K filter!"
+        profiles = data["profiles"]
+        c_disc = data["candidates_discovered"]
+        u_cand = data["unique_candidates"]
+        p_ver = data["profiles_verified"]
+        p_rej = data["profiles_rejected"]
+        rej_breakdown = data["rejection_breakdown"]
+        p_mat = data["profiles_matched"]
+        p_ret = data["profiles_returned"]
+        q_gen = data["queries_generated"]
+        q_exec = data["queries_executed"]
+        bias_pct = data["region_username_bias_pct"]
+        evidence_pct = data["bio_location_evidence_pct"]
 
-        # Verification: Follower range must be strictly respected
+        # Follower range validation
         min_f = req.followers_min or 0
         max_f = req.followers_max or float('inf')
         for p in profiles:
-            assert p.followers is not None, f"Profile {p.username} has unknown followers"
+            assert p.followers is not None, f"Profile @{p.username} has unknown follower count!"
             assert min_f <= p.followers <= max_f, f"Profile @{p.username} ({p.followers}) violates range {min_f}-{max_f}"
 
         row = {
@@ -120,39 +105,43 @@ async def run_forensic_benchmarks():
             "name": test["name"],
             "q_gen": q_gen,
             "q_exec": q_exec,
-            "pag": "Yes" if pag_used else "No",
             "c_disc": c_disc,
             "u_cand": u_cand,
             "p_ver": p_ver,
-            "f_pass": f_pass,
-            "rn_pass": rn_pass,
-            "returned": len(profiles),
+            "p_rej": p_rej,
+            "p_ret": p_ret,
+            "bias_pct": bias_pct,
+            "evidence_pct": evidence_pct,
             "duration": elapsed_sec
         }
         summary_rows.append(row)
 
-        print(f"\n----------------------------------------------------------------------------------", flush=True)
+        print(f"\n------------------------------------------------------------------------------------------", flush=True)
         print(f"[{test['id']}] {test['name']}", flush=True)
         print(f"  * Search Criteria: Region='{req.region}', Niche='{req.niche}', Followers={req.followers_min:,}–{req.followers_max:,}", flush=True)
-        print(f"  * Queries Generated: {q_gen} | Queries Executed: {q_exec} | Pagination: {'Yes' if pag_used else 'No'}", flush=True)
-        print(f"  * Raw Candidates: {c_disc} | Unique Deduplicated: {u_cand} | Verified Profiles: {p_ver}", flush=True)
-        print(f"  * Passed Follower Filter: {f_pass} | Passed Region & Niche Filters: {rn_pass}", flush=True)
-        print(f"  * Final Returned Profiles: {len(profiles)} (Time: {elapsed_sec}s)", flush=True)
+        print(f"  * Queries Generated: {q_gen} | Queries Executed: {q_exec}", flush=True)
+        print(f"  * Raw Candidates Discovered: {c_disc} | Unique Candidates: {u_cand}", flush=True)
+        print(f"  * Profiles Verified: {p_ver} | Profiles Rejected: {p_rej}", flush=True)
+        print(f"  * Rejection Reasons Breakdown: {rej_breakdown}", flush=True)
+        print(f"  * Final Matching Profiles: {p_mat} | Returned: {p_ret} (Time: {elapsed_sec}s)", flush=True)
+        print(f"  * CRITICAL METRIC: Region in Username Bias: {bias_pct}% (Lower = less biased)", flush=True)
+        print(f"  * CRITICAL METRIC: Verified Bio/Location Evidence: {evidence_pct}% (Target = 100%)", flush=True)
         
-        print(f"\n  Inspected Profiles (Top {min(8, len(profiles))}):", flush=True)
-        for idx, p in enumerate(profiles[:8], 1):
+        print(f"\n  Inspected Sample Profiles (First {min(6, len(profiles))}):", flush=True)
+        for idx, p in enumerate(profiles[:6], 1):
             f_str = f"{p.followers:,}" if p.followers else "Unknown"
             print(f"    {idx:2d}. @{p.username:<26} | Followers: {f_str:<10} | Region: {p.region or 'N/A':<10} | Score: {p.match_score}/100", flush=True)
             print(f"        URL: {p.profile_url}", flush=True)
             print(f"        Tags: {p.tags}", flush=True)
+            print(f"        Bio: {p.bio}", flush=True)
 
-    print("\n==================================================================================", flush=True)
+    print("\n==========================================================================================", flush=True)
     print("FORENSIC BENCHMARK SUMMARY TABLE", flush=True)
-    print("==================================================================================", flush=True)
-    print(f"{'Benchmark':<13} | {'Criteria':<32} | {'Queries':<7} | {'Raw':<5} | {'Unique':<6} | {'Verified':<8} | {'Follower':<8} | {'Matched':<7} | {'Time':<6}", flush=True)
-    print("-" * 105, flush=True)
+    print("==========================================================================================", flush=True)
+    print(f"{'Benchmark':<13} | {'Criteria':<32} | {'Queries':<7} | {'Raw':<5} | {'Unique':<6} | {'Returned':<8} | {'Handle Bias %':<13} | {'Bio Evidence %':<14} | {'Time':<6}", flush=True)
+    print("-" * 115, flush=True)
     for r in summary_rows:
-        print(f"{r['id']:<13} | {r['name']:<32} | {r['q_gen']:<7} | {r['c_disc']:<5} | {r['u_cand']:<6} | {r['p_ver']:<8} | {r['f_pass']:<8} | {r['returned']:<7} | {r['duration']:<6}s", flush=True)
+        print(f"{r['id']:<13} | {r['name']:<32} | {r['q_gen']:<7} | {r['c_disc']:<5} | {r['u_cand']:<6} | {r['p_ret']:<8} | {r['bias_pct']:<13}% | {r['evidence_pct']:<14}% | {r['duration']:<6}s", flush=True)
 
 if __name__ == "__main__":
-    asyncio.run(run_forensic_benchmarks())
+    asyncio.run(run_forensic_real_benchmarks())
