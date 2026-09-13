@@ -1,68 +1,71 @@
-# INSCOUT — Public Instagram Profile Discovery & Filtering Engine
+# INSCOUT — Public Instagram Profile Discovery & Qualification Engine
 
-![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
+![Version](https://img.shields.io/badge/version-3.0.0-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Python](https://img.shields.io/badge/python-3.12%2B-blue)
 ![React](https://img.shields.io/badge/react-18%2B-61dafb)
 ![FastAPI](https://img.shields.io/badge/fastapi-0.110%2B-009688)
 
-**INSCOUT** is a zero-cost (₹0 MVP) discovery engine designed to discover **real, publicly accessible Instagram profiles** based on user-defined criteria (Region, Niche, Follower Range, Bio Keywords), analyze available public signals, assign relevant tags, calculate a transparent Match Score (0–100), and present the results in an Instagram-inspired dark research interface with RFC4180 CSV export.
+**INSCOUT** is a zero-cost (₹0 MVP) public discovery engine designed to discover **real, publicly accessible Instagram creators** based on user-defined criteria (Region, Niche, Follower Range, Bio Keywords), extract available public signals, apply strict evidence-based qualification filters, calculate a transparent Match Score (0–100), and present results in an Instagram-inspired dark research interface with RFC4180 CSV export.
 
 ---
 
 ## 🚀 Key Features
 
-* **Multi-Criteria Public Discovery**:
-  * **Region**: Autocomplete for major Indian and global cities (`Delhi`, `Mumbai`, `Bangalore`, `Hyderabad`, `Chennai`, `Kolkata`, `Pune`, `Ahmedabad`, `Jaipur`, `Chandigarh`, `Gurgaon`, `Noida`, `Lucknow`, `Indore`, `Kochi`, etc.).
-  * **Niche**: 18+ comprehensive taxonomy categories (`Fashion`, `Beauty`, `Lifestyle`, `Fitness`, `Food`, `Travel`, `Technology`, `Gaming`, `Finance`, `Music`, `Photography`, `Art`, `Education`, `Business`, `Comedy`, `Sports`, `Health`, `Other`).
-  * **Follower Range**: Single compact dropdown (`Any followers`, `1K–10K`, `10K–50K`, `50K–100K`, `100K–500K`, `500K+`, `Custom range`).
-  * **Bio Keywords**: Interactive chip-based keyword tags with Enter key support.
-* **₹0 & Compliant Public Discovery**:
-  * Uses multi-strategy public web indexing (DuckDuckGo, Brave public SERP index, Bing public web index) without paid APIs or scraping proxies.
-  * Strictly filters non-profile Instagram routes (`explore`, `reels`, `p`, `stories`, `popular`, `channel`, etc.).
-* **Transparent Match Scoring (0–100)**:
-  * Centralized, configurable weights: Niche (35%), Region (25%), Followers (20%), Keywords (20%).
-  * Itemized "Why this score?" breakdown explaining exact score contributions on every profile card.
-* **Honest Data Provenance & Integrity**:
-  * Zero fake or simulated profiles in production workflows. If 0 profiles match, 0 are returned.
-  * Fields not publicly discoverable strictly display as `"Not available"`.
-  * Data confidence badges (`High`, `Medium`, `Low`) based on signal sources.
-* **Instagram-Inspired Dark UI**:
-  * Near-black background (`#000000`), dark charcoal surfaces (`#121212`), subtle grey borders, and tasteful Instagram gradient accents.
-  * Progressive disclosure for clean visual scanning.
-* **Post-Discovery Filtering & Sorting**:
-  * Instant multi-tag, region, and minimum match score filtering.
-  * Sorting by Match Score, Follower Count, or Region.
-* **1-Click CSV Export**:
-  * Formatted RFC4180 CSV download with UTF-8-SIG encoding for seamless Excel / Numbers / Google Sheets compatibility.
+* **Real Data Only**:
+  * Pure live discovery from publicly indexed Instagram profiles.
+  * Zero synthetic, simulated, or demo profiles in live search responses.
+  * Strict signal verification: if a field is not discoverable from public snippets, it is explicitly marked as `"Not available"`.
+* **Zero Username-Location Bias**:
+  * A city name in a username (e.g. `@delhi_creator`) is **never** accepted as proof of location.
+  * Geographic qualification is strictly evaluated from bio text and indexed location evidence (`HIGH` or `MEDIUM` confidence).
+* **Strict Hard Eligibility Filters**:
+  * **Follower Range**: Strict hard filter (`min <= followers <= max`). Unknown follower counts are rejected when a range is requested.
+  * **Region**: Strict bio-verified location matching.
+  * **Niche**: Strict semantic taxonomy verification across 17+ niches (`Fashion`, `Beauty`, `Lifestyle`, `Travel`, `Technology`, `Fitness`, `Food`, `Gaming`, `Finance`, `Music`, `Photography`, `Art`, `Education`, `Business`, `Comedy`, `Sports`, `Health`).
+* **Transparent Multi-Factor Match Scoring (0–100)**:
+  * Geographic Relevance: 0–30 pts (Bio-verified evidence only).
+  * Niche Relevance: 0–30 pts (Semantic taxonomy match).
+  * Bio Keyword Match: 0–20 pts (Normalized concept matching).
+  * Context & Collaboration Signals: 0–10 pts (PR/collab intent, rich bio).
+  * Data Confidence: 0–10 pts (Signal completeness).
+  * Follower count is a **0% score weight** (hard filter gate only).
+* **₹0 Cost & Platform Compliance**:
+  * Zero paid scraping APIs, commercial databases, or proxies.
+  * Operates strictly on public web indexing without bypassing platform restrictions or accessing private profiles.
+* **1-Click RFC4180 CSV Export**:
+  * UTF-8-SIG encoded CSV export with complete provenance, match reasons, and data confidence levels.
 
 ---
 
 ## 🏗️ System Architecture
 
 ```text
-User Criteria (Region, Niche, Followers, Keywords)
+User Criteria (Region, Niche, Follower Range, Keywords)
                       │
                       ▼
-  Search Query Generator (Layered Dorks)
+   Dynamic Semantic Query Expansion (30-50+ Anti-Bias Queries)
                       │
                       ▼
-     Public Web Search Discovery Engine
+       Multi-Engine Live Public SERP Discovery
                       │
                       ▼
-  Real Candidate Instagram Profiles
+   Candidate Normalization & Route Deduplication
                       │
                       ▼
-   Profile Normalizer & Confidence Evaluator
+   [HARD FILTER 1] Follower Range (min <= f <= max; unknown rejected)
                       │
                       ▼
-     Rule-Based Deterministic Tagging Engine
+   [HARD FILTER 2] Region Verification (Bio Evidence Only, 0% Handle Credit)
                       │
                       ▼
-    Transparent Match Scoring Engine (0-100)
+   [HARD FILTER 3] Semantic Niche Qualification
                       │
                       ▼
-  React TypeScript SaaS UI & RFC4180 CSV Export
+   Transparent Multi-Factor Match Scoring (0-100)
+                      │
+                      ▼
+   React TypeScript Dark SaaS UI & RFC4180 CSV Export
 ```
 
 ---
@@ -77,15 +80,16 @@ INSCOUT/
 │   │   ├── main.py               # FastAPI router endpoints & CORS middleware
 │   │   ├── discovery/
 │   │   │   ├── base.py           # Abstract Base DiscoveryProvider
-│   │   │   ├── search_provider.py# Multi-source public web search provider
+│   │   │   ├── search_provider.py# Multi-source live public search provider
 │   │   │   ├── mock_provider.py  # Isolated mock provider for unit testing
+│   │   │   ├── meta_provider.py  # Optional Meta Business Discovery provider
 │   │   │   └── engine.py         # Discovery coordinator
 │   │   ├── models/
 │   │   │   ├── profile.py        # DiscoveredProfile, DataConfidence models
 │   │   │   ├── search.py         # SearchRequest & SearchFilterParams models
 │   │   │   └── response.py       # SearchResponse, ExportResponse, HealthResponse
 │   │   ├── services/
-│   │   │   ├── query_generator.py# Layered search query builder
+│   │   │   ├── query_expansion.py# Multi-angle anti-bias query builder
 │   │   │   ├── normalizer.py     # Username cleaner, follower parser & confidence
 │   │   │   ├── tagger.py         # Deterministic taxonomy & regex tagger
 │   │   │   ├── scorer.py         # Multi-factor Match Score calculator
@@ -94,9 +98,12 @@ INSCOUT/
 │   │       └── session_store.py  # Fast in-memory session cache
 │   ├── requirements.txt
 │   └── tests/
-│       ├── test_engine.py        # Unit test suite
-│       ├── verify_e2e.py         # End-to-end API integration tests
-│       └── verify_real_discovery_report.py # Live search discovery audit
+│       ├── test_candidate_pipeline.py    # Pipeline & anti-bias tests
+│       ├── test_engine.py                # Engine unit tests
+│       ├── test_follower_filter.py       # Strict boundary tests
+│       ├── test_full_production_suite.py # 15-category audit test suite
+│       ├── test_query_expansion.py       # Query expansion tests
+│       └── verify_real_discovery_report.py# 6-scenario forensic benchmark
 │
 ├── frontend/
 │   ├── src/
@@ -153,17 +160,17 @@ pip install -r requirements.txt
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-The backend will be live at `http://127.0.0.1:8000`. API documentation is available at `http://127.0.0.1:8000/docs`.
+The backend is live at `http://127.0.0.1:8000`. API docs available at `http://127.0.0.1:8000/docs`.
 
 ### 2. Frontend Setup
 
 ```bash
 cd frontend
 
-# Install packages
+# Install dependencies
 npm install
 
-# Start Vite development server
+# Start Vite dev server
 npm run dev
 ```
 
@@ -173,16 +180,10 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 
 ## 🧪 Running Tests
 
-### Backend Unit Tests
+### Full Backend Test Suite (37 Tests)
 ```bash
 cd backend
-python -m pytest tests/test_engine.py
-```
-
-### End-to-End Live Discovery Audit
-```bash
-cd backend
-python -m tests.verify_real_discovery_report
+python -m pytest
 ```
 
 ### Frontend Build Validation
@@ -196,7 +197,7 @@ npm run build
 ## 📡 API Reference
 
 ### `POST /api/search`
-Executes real public web discovery against user criteria.
+Executes live public web discovery against user criteria.
 
 **Request Body:**
 ```json
@@ -207,7 +208,7 @@ Executes real public web discovery against user criteria.
   "followers_max": 100000,
   "keywords": ["model", "creator"],
   "provider": "search",
-  "max_results": 30
+  "max_results": 100
 }
 ```
 
@@ -218,10 +219,18 @@ Retrieves cached search session results.
 Retrieves detailed metadata for a discovered profile handle.
 
 ### `GET /api/export/{search_id}?format=csv`
-Downloads an RFC4180 CSV file with UTF-8-SIG encoding containing all discovered profiles.
+Downloads an RFC4180 CSV file with UTF-8-SIG encoding.
 
 ### `GET /api/health`
-Health check endpoint returning service status and version.
+Health check endpoint returning service status and active providers.
+
+---
+
+## 📋 Data Source & Coverage Transparency
+
+INSCOUT strictly adheres to a ₹0, legitimate public discovery paradigm:
+1. **Public Web SERP Indexing**: Discovers creators indexed by search engines. This provides legitimate public discovery without accessing private profiles or violating platform terms.
+2. **Coverage Scope**: Public search engine indexes index a fraction of Instagram's total user base. If search engines rate-limit requests or index few matching bios for specific granular niches, INSCOUT returns only verified matches and never fabricates mock profiles.
 
 ---
 

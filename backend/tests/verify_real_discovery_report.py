@@ -1,8 +1,10 @@
 import sys
+import os
 import time
 import asyncio
 import warnings
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 warnings.filterwarnings("ignore")
 sys.stdout.reconfigure(encoding='utf-8')
 

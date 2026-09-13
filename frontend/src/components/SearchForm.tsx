@@ -121,7 +121,7 @@ export const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading }) =
       followers_max: maxF,
       keywords: keywords,
       provider: 'search',
-      max_results: 30,
+      max_results: 100,
     });
   };
 

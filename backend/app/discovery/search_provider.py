@@ -4,6 +4,7 @@ import urllib.parse
 import re
 import warnings
 from typing import List, Set, Dict, Any, Tuple, Optional
+import httpx
 import primp
 from bs4 import BeautifulSoup
 
@@ -17,7 +18,6 @@ from app.services.query_expansion import QueryExpansionEngine
 from app.services.normalizer import ProfileNormalizer, RESERVED_USERNAMES
 from app.services.tagger import TaggingEngine
 from app.services.scorer import ScoringEngine
-from app.discovery.creator_index import PUBLIC_CREATOR_INDEX
 
 logger = logging.getLogger("inscout.discovery_pipeline")
 
@@ -26,17 +26,17 @@ RESERVED_USERNAMES.update({
     "tags", "explore", "reels", "p", "stories", "locations", "accounts",
     "legal", "privacy", "terms", "help", "instagram", "graphql", "developer",
     "press", "api", "support", "creators", "business", "live", "tv", "audio",
-    "search", "preferences"
+    "search", "preferences", "feed", "emails", "login", "signup"
 })
 
 class SearchDiscoveryProvider(BaseDiscoveryProvider):
     """
-    INSCOUT Discovery Engine V3 — Multi-Source Real Public Web & Directory Discovery Pipeline ($0 Cost).
+    INSCOUT Pure Live Discovery Engine V3 ($0 Cost, Real Data Only).
     
     Architecture:
       1. Dynamic Semantic Query Expansion (30-50+ anti-bias queries)
-      2. Multi-Source Public SERP & Verified Directory Aggregation
-      3. Candidate Pool Normalization (200-500 raw candidates) & Handle Deduplication
+      2. Multi-Engine Live Public SERP Web Discovery (Brave, Yahoo, DDG dorks)
+      3. Candidate Normalization & Handle Deduplication
       4. Profile Verification & Non-User Route Rejection
       5. Signal Extraction (Bio text, Follower count regex, Location signals)
       6. [HARD FILTER 1] Follower Range (Strict: min <= followers <= max; unknown rejected)
@@ -59,6 +59,72 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
         res = await self.discover_profiles_with_metrics(request)
         return res["profiles"]
 
+    def _query_brave_sync(self, query: str) -> List[Dict[str, str]]:
+        results: List[Dict[str, str]] = []
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9"
+        }
+        try:
+            url = f"https://search.brave.com/search?q={urllib.parse.quote(query)}"
+            with httpx.Client(headers=headers, follow_redirects=True, timeout=8.0) as client:
+                r = client.get(url)
+                if r.status_code == 200 and r.text:
+                    soup = BeautifulSoup(r.text, "html.parser")
+                    for el in soup.find_all(attrs={"data-type": True}):
+                        a_tag = el.find("a", href=True)
+                        if a_tag and "instagram.com" in a_tag["href"]:
+                            href = a_tag["href"]
+                            u = ProfileNormalizer.extract_username_from_url(href)
+                            if u and u not in RESERVED_USERNAMES:
+                                title_el = el.find(class_=lambda c: c and "title" in c) or a_tag
+                                snippet_el = el.find(class_=lambda c: c and "snippet" in c) or el.find("p") or el.find(class_=lambda c: c and "desc" in c)
+                                title = title_el.get_text(strip=True) if title_el else ""
+                                snippet = snippet_el.get_text(strip=True) if snippet_el else ""
+                                results.append({
+                                    "username": u,
+                                    "url": f"https://www.instagram.com/{u}/",
+                                    "title": title,
+                                    "snippet": snippet
+                                })
+        except Exception as e:
+            logger.debug(f"Brave search error for query '{query}': {e}")
+        return results
+
+    def _query_yahoo_sync(self, query: str, page_offset: int = 1) -> List[Dict[str, str]]:
+        results: List[Dict[str, str]] = []
+        try:
+            client = primp.Client()
+            url = f"https://search.yahoo.com/search?p={urllib.parse.quote(query)}&b={page_offset}"
+            r = client.get(url)
+            if r.status_code == 200 and r.text:
+                soup = BeautifulSoup(r.text, "html.parser")
+                for a in soup.select("h3 a, a"):
+                    raw_href = a.get("href", "")
+                    unquoted_href = urllib.parse.unquote(raw_href)
+                    if "instagram.com" in unquoted_href:
+                        actual_url = unquoted_href
+                        if "/RU=" in unquoted_href:
+                            try:
+                                actual_url = unquoted_href.split("/RU=")[-1].split("/RK=")[0]
+                            except Exception:
+                                pass
+                        u = ProfileNormalizer.extract_username_from_url(actual_url)
+                        if u and u not in RESERVED_USERNAMES:
+                            p_desc = a.find_next("div", class_="compText")
+                            snippet = p_desc.get_text(strip=True) if p_desc else ""
+                            title = a.get_text(strip=True)
+                            results.append({
+                                "username": u,
+                                "url": f"https://www.instagram.com/{u}/",
+                                "title": title,
+                                "snippet": snippet
+                            })
+        except Exception as e:
+            logger.debug(f"Yahoo search error for query '{query}': {e}")
+        return results
+
     async def discover_profiles_with_metrics(
         self, request: SearchRequest
     ) -> Dict[str, Any]:
@@ -69,82 +135,56 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
         # 1. Expand User Search into 30-50+ Anti-Bias Semantic Queries
         expanded_queries = QueryExpansionEngine.expand_queries(request, max_queries=max_queries)
         total_queries_generated = len(expanded_queries)
-        logger.info(f"V3 Discovery: Generated {total_queries_generated} anti-bias discovery queries.")
+        logger.info(f"V3 Live Discovery: Generated {total_queries_generated} anti-bias discovery queries.")
 
         raw_candidate_count = 0
         candidate_pool: Dict[str, Dict[str, Any]] = {}
         queries_executed = 0
         pagination_used = True
 
-        # 2. Multi-Source Candidate Pool: Public Directory + Live SERP Queries
-        req_niche = (request.niche or "").lower().strip()
-        req_reg = (request.region or "").lower().strip()
-        is_all_regions = not req_reg or "any region" in req_reg or req_reg == "india"
+        # 2. Pure Live Multi-Engine Web Discovery (Brave, Yahoo)
+        queries_to_run = expanded_queries[:25]
+        sem = asyncio.Semaphore(8)
 
-        # Source A: Verified Public Creator Repository
-        for entry in PUBLIC_CREATOR_INDEX:
-            entry_niche = (entry.get("niche") or "").lower()
-            entry_reg = (entry.get("region") or "").lower()
-            
-            niche_match = not req_niche or req_niche == "other" or req_niche in entry_niche or entry_niche in req_niche
-            reg_match = is_all_regions or req_reg in entry_reg or entry_reg in req_reg
-            
-            if niche_match and (reg_match or is_all_regions):
-                u = entry["username"].lower()
-                raw_candidate_count += 1
-                if u not in RESERVED_USERNAMES and u not in candidate_pool:
-                    candidate_pool[u] = {
-                        "username": u,
-                        "url": f"https://www.instagram.com/{u}/",
-                        "title": f"{entry.get('display_name', u)} (@{u}) • Instagram photos and videos",
-                        "snippet": f"{entry.get('followers', 0)} Followers. {entry.get('bio', '')}",
-                        "source_query": f"verified_repository_{entry.get('region')}_{entry.get('niche')}"
-                    }
+        async def execute_single_query(q: str) -> List[Dict[str, str]]:
+            async with sem:
+                hits = []
+                try:
+                    # Yahoo page 1
+                    y1 = await asyncio.to_thread(self._query_yahoo_sync, q, 1)
+                    hits.extend(y1)
+                except Exception:
+                    pass
+                try:
+                    # Brave
+                    b = await asyncio.to_thread(self._query_brave_sync, q)
+                    hits.extend(b)
+                except Exception:
+                    pass
+                return hits
 
-        # Source B: Live Public SERP Web Search with TLS Client
-        try:
-            client = primp.Client()
-            for q in expanded_queries[:12]:
-                for page_offset in [1, 11]:
-                    queries_executed += 1
-                    try:
-                        url = f"https://search.yahoo.com/search?p={urllib.parse.quote(q)}&b={page_offset}"
-                        r = client.get(url)
-                        if r.status_code == 200 and r.text:
-                            soup = BeautifulSoup(r.text, "html.parser")
-                            for a in soup.select("h3 a, a"):
-                                raw_href = a.get("href", "")
-                                unquoted_href = urllib.parse.unquote(raw_href)
-                                if "instagram.com" in unquoted_href:
-                                    actual_url = unquoted_href
-                                    if "/RU=" in unquoted_href:
-                                        try:
-                                            actual_url = unquoted_href.split("/RU=")[-1].split("/RK=")[0]
-                                        except Exception:
-                                            pass
-                                    u = ProfileNormalizer.extract_username_from_url(actual_url)
-                                    if u and u.lower() not in RESERVED_USERNAMES:
-                                        u_clean = u.lower()
-                                        raw_candidate_count += 1
-                                        p_desc = a.find_next("div", class_="compText")
-                                        snippet = p_desc.get_text(strip=True) if p_desc else ""
-                                        title = a.get_text(strip=True)
-                                        if u_clean not in candidate_pool:
-                                            candidate_pool[u_clean] = {
-                                                "username": u,
-                                                "url": f"https://www.instagram.com/{u}/",
-                                                "title": title,
-                                                "snippet": snippet,
-                                                "source_query": q
-                                            }
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+        query_tasks = [execute_single_query(q) for q in queries_to_run]
+        gathered_results = await asyncio.gather(*query_tasks, return_exceptions=True)
+        queries_executed = len(queries_to_run)
+
+        for query_idx, res in enumerate(gathered_results):
+            if isinstance(res, list):
+                q_text = queries_to_run[query_idx]
+                for hit in res:
+                    u_clean = hit["username"].lower()
+                    raw_candidate_count += 1
+                    if u_clean not in candidate_pool:
+                        candidate_pool[u_clean] = {
+                            "username": hit["username"],
+                            "url": hit["url"],
+                            "title": hit["title"],
+                            "snippet": hit["snippet"],
+                            "source_query": q_text
+                        }
 
         unique_candidate_count = len(candidate_pool)
         candidates_discovered = max(raw_candidate_count, unique_candidate_count)
-        logger.info(f"V3 Discovery: Discovered {candidates_discovered} raw ({unique_candidate_count} unique) candidates.")
+        logger.info(f"V3 Live Discovery: Discovered {candidates_discovered} raw ({unique_candidate_count} unique) candidates.")
 
         # 3. Profile Verification, Signal Extraction, and Bio-Only Geographic Qualification
         extracted_candidates: List[Dict[str, Any]] = []
@@ -198,7 +238,7 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
             })
 
         profiles_verified = len(extracted_candidates)
-        logger.info(f"V3 Discovery: Verified {profiles_verified} public profiles.")
+        logger.info(f"V3 Live Discovery: Verified {profiles_verified} public profiles.")
 
         # 4. [HARD FILTER 1] Follower Range Filtering (Strict min <= followers <= max)
         has_min_f = request.followers_min is not None and request.followers_min > 0
@@ -227,7 +267,7 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
             follower_filtered.append(cand)
 
         follower_filter_passed = len(follower_filtered)
-        logger.info(f"V3 Discovery: {follower_filter_passed}/{profiles_verified} passed follower hard filter.")
+        logger.info(f"V3 Live Discovery: {follower_filter_passed}/{profiles_verified} passed follower hard filter.")
 
         # 5. [HARD FILTER 2 & 3] Region & Niche Hard Filters (Bio-Verified Evidence Only)
         region_niche_filtered: List[Dict[str, Any]] = []
@@ -263,7 +303,7 @@ class SearchDiscoveryProvider(BaseDiscoveryProvider):
             region_niche_filtered.append(cand)
 
         region_niche_passed = len(region_niche_filtered)
-        logger.info(f"V3 Discovery: {region_niche_passed}/{follower_filter_passed} passed region and niche hard filters.")
+        logger.info(f"V3 Live Discovery: {region_niche_passed}/{follower_filter_passed} passed region and niche hard filters.")
 
         # 6. Post-Filter Relevance Scoring (Region 30, Niche 30, Keywords 20, Context 10, Conf 10)
         scored_profiles: List[DiscoveredProfile] = []
